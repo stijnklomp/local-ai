@@ -84,7 +84,7 @@ Reload:
 sudo ufw reload
 ```
 
-## Run Ollama model
+## Run/install Ollama model
 
 ```sh
 ollama run <model>
@@ -92,7 +92,7 @@ ollama run <model>
 
 ## Run Docker sandbox with OpenCode
 
-Create an [OpenCode config file](https://opencode.ai/docs/config/) at the project directory:
+Create an [OpenCode config file](https://opencode.ai/docs/config/) at `~/.config/opencode/opencode.json`:
 
 opencode.json
 ```json
@@ -112,8 +112,8 @@ opencode.json
 }
 ```
 
-Run Docker Sandbox with OpenCode:
+Run Docker Sandbox with OpenCode: (Automatically mounts current directory)
 
 ```sh
-sbx run opencode
+cp ~/.config/opencode/opencode.json . && sbx run opencode
 ```
