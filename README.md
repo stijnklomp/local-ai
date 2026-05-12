@@ -117,3 +117,39 @@ Run Docker Sandbox with OpenCode: (Automatically mounts current directory)
 ```sh
 cp ~/.config/opencode/opencode.json . && sbx run opencode
 ```
+
+## Run Docker sandbox with OpenCode and agent memory
+
+Follow through all "Run Docker sandbox with OpenCode" steps except for running running the sandbox.
+
+From current repo:
+```sh
+export LOCAL_AI_REPO_PATH="<path-to-local-ai-repo>"
+export AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH="<path-to-agent-memory-hooks-neo4j-repo>"
+export FINAL_DIRECTORY="$HOME.config/opencode"
+
+mkdir -p "$FINAL_DIRECTORY/.opencode/plugins"
+mkdir -p "$FINAL_DIRECTORY/hooks"
+mkdir -p "$FINAL_DIRECTORY/plugins"
+
+cp "$LOCAL_AI_REPO_PATH/docker-compose.yml" "$FINAL_DIRECTORY/docker-compose.yml"
+cp "$LOCAL_AI_REPO_PATH/Dockerfile.dream" "$FINAL_DIRECTORY/Dockerfile.dream"
+
+cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/.opencode/plugins/neo4j-memory.js" "$FINAL_DIRECTORY/.opencode/plugins/neo4j-memory.js"
+cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/inject_memory.py" "$FINAL_DIRECTORY/hooks/"
+cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/log_event.py" "$FINAL_DIRECTORY/hooks/"
+```
+
+Run Docker Sandbox with OpenCode: (Automatically mounts current directory)
+
+```sh
+./run-opencode-in-docker-sandbox.sh
+```
+
+Run Dream phase: (Used for consolidating memory)
+
+```sh
+ANTHROPIC_API_KEY=sk-ant-... docker compose run --build --rm dream
+ANTHROPIC_API_KEY=sk-ant-... docker compose run --build --rm dream --since 24h
+ANTHROPIC_API_KEY=sk-ant-... docker compose run --build --rm dream --dry-run
+```

@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt
+RUN git clone --depth=1 https://github.com/tomasonjo/agent-memory-hooks-neo4j.git repo
+
+RUN pip install --no-cache-dir \
+    -r /opt/repo/requirements.txt \
+    -r /opt/repo/dream/requirements.txt
+
+WORKDIR /opt/repo/dream
+ENTRYPOINT ["python", "dream.py"]

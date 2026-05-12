@@ -1,0 +1,65 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Neo4j + Dream phase for agent-memory-hooks-neo4j
+#
+# Start Neo4j (keep running in background):
+#   docker compose up -d neo4j
+#
+# Run the dream phase (one-shot, exits when done):
+#   docker compose run --rm dream
+#   docker compose run --rm dream --since 24h
+#   docker compose run --rm dream --dry-run
+#   docker compose run --rm dream --session <session_id>
+#
+# Stop Neo4j (data kept):  docker compose down
+# Wipe Neo4j data:         docker compose down -v
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  neo4j:
+    image: neo4j:5
+    container_name: neo4j-memory
+    restart: unless-stopped
+    ports:
+      - "7474:7474"   # Browser → http://localhost:7474
+      - "7687:7687"   # Bolt    → bolt://localhost:7687
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-password}"
+      NEO4J_dbms_connector_bolt_listen__address: "0.0.0.0:7687"
+      NEO4J_dbms_connector_http_listen__address: "0.0.0.0:7474"
+      NEO4J_server_memory_heap_initial__size: "256m"
+      NEO4J_server_memory_heap_max__size: "512m"
+      NEO4J_server_memory_pagecache_size: "256m"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7474"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  dream:
+    build:
+      context: .
+      dockerfile: Dockerfile.dream
+    image: neo4j-dream
+    environment:
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      HOOKS_NEO4J_URI: "bolt://host.docker.internal:7687"
+      HOOKS_NEO4J_USER: "neo4j"
+      HOOKS_NEO4J_PASSWORD: "${NEO4J_PASSWORD:-password}"
+      # Optional: override the model used for consolidation
+      # DREAM_MODEL: "claude-opus-4-7"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles:
+      - dream
+
+volumes:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
