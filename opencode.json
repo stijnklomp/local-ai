@@ -12,7 +12,22 @@
         "baseURL": "http://host.docker.internal:11434/v1"
       },
       "models": {
-       "qwen3.6:35b": {
+        "llama3.1:8b-instruct-q5_K_M": {
+          "name": "Llama 3.1 (8B) General"
+        },
+        "gemma4:latest": {
+          "name": "Gemma 4 (8B) General"
+        },
+        "llama3.3:70b": {
+          "name": "Llama 3.3 (70B) General high reasoning"
+        },
+        "deepseek-coder-v2:16b-lite-instruct-q4_K_M": {
+          "name": "Deepseek Coder 2 (16B) Coding"
+        },
+        "qwen3.6:27b": {
+          "name": "Qwen 3.6 (27B) Coding"
+        },
+        "qwen3.6:35b": {
           "name": "Qwen 3.6 (35B) MoE Coding"
         }
       }

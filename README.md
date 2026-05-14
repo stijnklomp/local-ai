@@ -126,18 +126,20 @@ From current repo:
 ```sh
 export LOCAL_AI_REPO_PATH="<path-to-local-ai-repo>"
 export AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH="<path-to-agent-memory-hooks-neo4j-repo>"
-export FINAL_DIRECTORY="$HOME.config/opencode"
+export OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
 
-mkdir -p "$FINAL_DIRECTORY/.opencode/plugins"
-mkdir -p "$FINAL_DIRECTORY/hooks"
-mkdir -p "$FINAL_DIRECTORY/plugins"
+sudo mkdir -p "$OPENCODE_CONFIG_DIR/.opencode/plugins"
+sudo mkdir -p "$OPENCODE_CONFIG_DIR/hooks"
+sudo mkdir -p "$OPENCODE_CONFIG_DIR/plugins"
+sudo mkdir -p "$OPENCODE_CONFIG_DIR/dream"
 
-cp "$LOCAL_AI_REPO_PATH/docker-compose.yml" "$FINAL_DIRECTORY/docker-compose.yml"
-cp "$LOCAL_AI_REPO_PATH/Dockerfile.dream" "$FINAL_DIRECTORY/Dockerfile.dream"
+sudo cp "$LOCAL_AI_REPO_PATH/docker-compose.yml" "$OPENCODE_CONFIG_DIR/docker-compose.yml"
+sudo cp "$LOCAL_AI_REPO_PATH/Dockerfile.dream" "$OPENCODE_CONFIG_DIR/Dockerfile.dream"
 
-cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/.opencode/plugins/neo4j-memory.js" "$FINAL_DIRECTORY/.opencode/plugins/neo4j-memory.js"
-cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/inject_memory.py" "$FINAL_DIRECTORY/hooks/"
-cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/log_event.py" "$FINAL_DIRECTORY/hooks/"
+sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/.opencode/plugins/neo4j-memory.js" "$OPENCODE_CONFIG_DIR/.opencode/plugins/neo4j-memory.js"
+sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/inject_memory.py" "$OPENCODE_CONFIG_DIR/hooks/"
+sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/log_event.py" "$OPENCODE_CONFIG_DIR/hooks/"
+sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/dream/dream.py" "$OPENCODE_CONFIG_DIR/dream/"
 ```
 
 Run Docker Sandbox with OpenCode: (Automatically mounts current directory)
