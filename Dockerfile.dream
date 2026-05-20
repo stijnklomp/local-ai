@@ -6,9 +6,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends git \
 WORKDIR /opt
 RUN git clone --depth=1 https://github.com/stijnklomp/agent-memory-hooks-neo4j.git repo
 
-RUN pip install --no-cache-dir \
-    -r /opt/repo/dream/requirements.txt \
-    -r /opt/repo/dream/requirements.txt
-
 WORKDIR /opt/repo/dream
 ENTRYPOINT ["python", "dream.py"]

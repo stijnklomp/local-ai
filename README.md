@@ -137,7 +137,7 @@ sudo cp "$LOCAL_AI_REPO_PATH/docker-compose.yml" "$OPENCODE_CONFIG_DIR/docker-co
 sudo cp "$LOCAL_AI_REPO_PATH/Dockerfile.dream" "$OPENCODE_CONFIG_DIR/Dockerfile.dream"
 
 sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/.opencode/plugins/neo4j-memory.js" "$OPENCODE_CONFIG_DIR/.opencode/plugins/neo4j-memory.js"
-sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/inject_memory.py" "$OPENCODE_CONFIG_DIR/hooks/"
+sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/inject_memory.js" "$OPENCODE_CONFIG_DIR/hooks/"
 sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/log_event.py" "$OPENCODE_CONFIG_DIR/hooks/"
 sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/dream/dream.py" "$OPENCODE_CONFIG_DIR/dream/"
 ```
@@ -151,7 +151,14 @@ Run Docker Sandbox with OpenCode: (Automatically mounts current directory)
 Run Dream phase: (Used for consolidating memory)
 
 ```sh
-ANTHROPIC_API_KEY=sk-ant-... docker compose run --build --rm dream
-ANTHROPIC_API_KEY=sk-ant-... docker compose run --build --rm dream --since 24h
-ANTHROPIC_API_KEY=sk-ant-... docker compose run --build --rm dream --dry-run
+docker compose run --rm dream --since 24h --dry-run
+docker compose run --rm dream --context my-project
+```
+
+### Directly (from inside the Docker Sandbox or host)
+
+```sh
+python dream/dream.py
+python dream/dream.py --since 24h
+python dream/dream.py --context my-project --dry-run
 ```
