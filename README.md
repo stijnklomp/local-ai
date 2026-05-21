@@ -148,17 +148,31 @@ Run Docker Sandbox with OpenCode: (Automatically mounts current directory)
 ./run-opencode-in-docker-sandbox.sh
 ```
 
-Run Dream phase: (Used for consolidating memory)
+### Run Dream phase: (Used for consolidating memory)
+
+Directly from inside the Docker Sandbox:
 
 ```sh
-docker compose run --rm dream --since 24h --dry-run
-docker compose run --rm dream --context my-project
+docker build -t dream-phase -f Dockerfile.dream . && docker run dream-phase --model qwen3:14b-fp16 --context my-project
+
+# Outside Docker sandbox
+ollama stop qwen2.5-coder:14b
 ```
 
-### Directly (from inside the Docker Sandbox or host)
+### Wipe all memory
+
+Run on host:
 
 ```sh
-python dream/dream.py
-python dream/dream.py --since 24h
-python dream/dream.py --context my-project --dry-run
+# Remove all current memories
+curl -s -u neo4j:password \
+  -H "Content-Type: application/json" \
+  -X POST http://localhost:7474/db/neo4j/tx/commit \
+  -d '{"statements":[{"statement":"MATCH (m:Memory) DETACH DELETE m"}]}'
+
+# Reset watermarks so all sessions reprocess
+curl -s -u neo4j:password \
+  -H "Content-Type: application/json" \
+  -X POST http://localhost:7474/db/neo4j/tx/commit \
+  -d '{"statements":[{"statement":"MATCH (s:Session) REMOVE s.dream_watermark"}]}'
 ```
