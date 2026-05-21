@@ -1,0 +1,371 @@
+
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-secondary: #f5f5f4;
+  --bg-tertiary: #eeede9;
+  --bg-info: #e6f1fb;
+  --bg-danger: #fcebeb;
+  --bg-success: #eaf3de;
+  --text: #1a1a18;
+  --text-secondary: #5f5e5a;
+  --text-tertiary: #888780;
+  --text-info: #185fa5;
+  --text-danger: #a32d2d;
+  --text-success: #3b6d11;
+  --border: rgba(0,0,0,0.12);
+  --border-hover: rgba(0,0,0,0.22);
+  --border-strong: rgba(0,0,0,0.32);
+  --border-info: rgba(24,95,165,0.3);
+  --border-danger: rgba(163,45,45,0.3);
+  --border-success: rgba(59,109,17,0.3);
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  --teal-fill: #E1F5EE;
+  --teal-text: #0F6E56;
+  --teal-border: #9FE1CB;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1a;
+    --bg-secondary: #252523;
+    --bg-tertiary: #2e2e2b;
+    --bg-info: #0c447c;
+    --bg-danger: #791f1f;
+    --bg-success: #27500a;
+    --text: #f0ede6;
+    --text-secondary: #b4b2a9;
+    --text-tertiary: #888780;
+    --text-info: #85b7eb;
+    --text-danger: #f09595;
+    --text-success: #97c459;
+    --border: rgba(255,255,255,0.1);
+    --border-hover: rgba(255,255,255,0.18);
+    --border-strong: rgba(255,255,255,0.28);
+    --border-info: rgba(133,183,235,0.3);
+    --border-danger: rgba(240,149,149,0.3);
+    --border-success: rgba(151,196,89,0.3);
+    --teal-fill: #085041;
+    --teal-text: #9FE1CB;
+    --teal-border: #0F6E56;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:14px}
+.app{padding:1.5rem;max-width:680px;margin:0 auto}
+.header{display:flex;align-items:center;gap:10px;margin-bottom:1.5rem;padding-bottom:1.25rem;border-bottom:0.5px solid var(--border)}
+.header-icon{width:32px;height:32px;border-radius:var(--radius-md);background:var(--bg-secondary);border:0.5px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:16px;flex-shrink:0}
+.header-title{font-size:15px;font-weight:500;color:var(--text)}
+.header-sub{font-size:12px;color:var(--text-tertiary);margin-top:2px}
+.conn-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:1.25rem;padding:12px 14px;background:var(--bg-secondary);border-radius:var(--radius-lg);border:0.5px solid var(--border)}
+.conn-row input{font-size:13px;padding:0 10px;height:30px;border-radius:var(--radius-md);border:0.5px solid var(--border-hover);background:var(--bg);color:var(--text);outline:none}
+.conn-row input:focus{border-color:var(--border-strong);box-shadow:0 0 0 2px var(--border)}
+#neo4j-url{flex:1;min-width:140px}
+#neo4j-user,#neo4j-pass{width:90px}
+.btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 12px;border-radius:var(--radius-md);border:0.5px solid var(--border-hover);background:var(--bg);color:var(--text);font-size:13px;cursor:pointer;white-space:nowrap;transition:background 0.1s;font-family:var(--font-sans)}
+.btn:hover{background:var(--bg-secondary)}
+.btn:active{transform:scale(0.98)}
+.btn-primary{background:var(--text);color:var(--bg);border-color:transparent}
+.btn-primary:hover{opacity:0.85;background:var(--text)}
+.btn-sm{height:26px;padding:0 10px;font-size:12px}
+.btn-danger{color:var(--text-danger);border-color:var(--border-danger)}
+.btn-danger:hover{background:var(--bg-danger)}
+.status{font-size:12px;color:var(--text-tertiary)}
+.status.ok{color:var(--text-success)}
+.status.err{color:var(--text-danger)}
+.section-label{font-size:11px;font-weight:500;color:var(--text-tertiary);letter-spacing:0.05em;text-transform:uppercase;margin-bottom:8px}
+.ctx-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:1.25rem}
+.ctx-chip{height:26px;padding:0 12px;border-radius:99px;border:0.5px solid var(--border);background:var(--bg);color:var(--text-secondary);font-size:12px;cursor:pointer;transition:all 0.1s;font-family:var(--font-sans)}
+.ctx-chip:hover:not(.active){background:var(--bg-secondary);border-color:var(--border-hover)}
+.ctx-chip.active{background:var(--text);color:var(--bg);border-color:transparent}
+.filter-row{display:flex;align-items:center;gap:8px;margin-bottom:1rem}
+.search-wrap{position:relative;flex:1;max-width:280px}
+.search-icon{position:absolute;left:9px;top:50%;transform:translateY(-50%);font-size:14px;color:var(--text-tertiary);pointer-events:none}
+.search-wrap input{width:100%;font-size:13px;padding:0 10px 0 32px;height:32px;border-radius:var(--radius-md);border:0.5px solid var(--border-hover);background:var(--bg);color:var(--text);outline:none;font-family:var(--font-sans)}
+.search-wrap input:focus{border-color:var(--border-strong)}
+.count{font-size:12px;color:var(--text-tertiary);margin-right:auto}
+.memory-list{display:flex;flex-direction:column;gap:6px}
+.memory-card{background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;transition:border-color 0.1s}
+.memory-card:hover{border-color:var(--border-hover)}
+.card-header{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;user-select:none}
+.card-header:hover{background:var(--bg-secondary)}
+.path-icon{font-size:14px;color:var(--text-tertiary);flex-shrink:0}
+.card-path{font-size:13px;font-weight:500;font-family:var(--font-mono);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.badge{font-size:11px;padding:2px 8px;border-radius:99px;border:0.5px solid var(--border);background:var(--bg-secondary);color:var(--text-secondary);flex-shrink:0}
+.badge-global{background:var(--teal-fill);color:var(--teal-text);border-color:var(--teal-border)}
+.chev{font-size:13px;color:var(--text-tertiary);flex-shrink:0;transition:transform 0.2s;display:inline-block}
+.chev.open{transform:rotate(180deg)}
+.card-body{font-size:12px;color:var(--text-secondary);line-height:1.7;white-space:pre-wrap;font-family:var(--font-mono);padding:0 14px;max-height:0;overflow:hidden;transition:max-height 0.25s ease,padding 0.15s}
+.card-body.open{max-height:400px;padding:10px 14px}
+.card-footer{display:flex;align-items:center;gap:6px;padding:8px 14px;border-top:0.5px solid var(--border);background:var(--bg-secondary)}
+.card-footer.hidden{display:none}
+.card-ts{font-size:11px;color:var(--text-tertiary);margin-left:auto}
+.edit-wrap{padding:10px 14px;border-top:0.5px solid var(--border)}
+.edit-fields{display:flex;gap:8px;margin-bottom:8px}
+.edit-fields input{font-size:12px;font-family:var(--font-mono);height:28px;padding:0 8px;border-radius:var(--radius-md);border:0.5px solid var(--border-hover);background:var(--bg-secondary);color:var(--text);outline:none;flex:1}
+.edit-fields input:last-child{max-width:130px;flex:none}
+.edit-fields input:focus{border-color:var(--border-strong)}
+textarea.edit-area{width:100%;min-height:90px;font-size:12px;font-family:var(--font-mono);padding:8px;border-radius:var(--radius-md);border:0.5px solid var(--border-hover);background:var(--bg-secondary);color:var(--text);resize:vertical;outline:none;line-height:1.6}
+textarea.edit-area:focus{border-color:var(--border-strong)}
+.edit-actions{display:flex;gap:6px;margin-top:8px}
+.new-form{background:var(--bg-secondary);border:0.5px solid var(--border-hover);border-radius:var(--radius-lg);padding:14px;margin-bottom:1rem}
+.new-form-fields{display:flex;gap:8px;margin-bottom:8px}
+.new-form-fields input{font-size:13px;height:30px;padding:0 10px;border-radius:var(--radius-md);border:0.5px solid var(--border-hover);background:var(--bg);color:var(--text);outline:none;flex:1;font-family:var(--font-sans)}
+.new-form-fields input:last-child{max-width:150px;flex:none}
+.new-form-fields input:focus{border-color:var(--border-strong)}
+.empty{text-align:center;padding:3rem 1rem;color:var(--text-tertiary)}
+.empty svg{display:block;margin:0 auto 10px;opacity:.35}
+.empty p{font-size:13px}
+</style>
+
+<h2 class="sr-only">Neo4j memory manager</h2>
+
+<div class="app">
+  <div class="header">
+    <div class="header-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-8.5 8.5M9 5H5v4M19 15v4h-4M5 19l14-14"/></svg>
+    </div>
+    <div>
+      <div class="header-title">Memory manager</div>
+      <div class="header-sub">View and edit agent memories stored in Neo4j</div>
+    </div>
+  </div>
+
+  <div class="conn-row">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12H3m18 0h-2M12 5V3m0 18v-2M6.343 6.343l-1.414-1.414m14.142 14.142l-1.414-1.414M6.343 17.657l-1.414 1.414M18.728 5.272l-1.414 1.414M12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+    <input type="text" id="neo4j-url" value="http://localhost:7474" placeholder="Neo4j URL" />
+    <input type="text" id="neo4j-user" value="neo4j" placeholder="User" />
+    <input type="password" id="neo4j-pass" value="password" placeholder="Password" />
+    <button class="btn btn-primary btn-sm" onclick="loadMemories()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+      Load
+    </button>
+    <span id="status" class="status"></span>
+  </div>
+
+  <div class="section-label">Context</div>
+  <div class="ctx-row" id="context-chips">
+    <button class="ctx-chip active" data-ctx="__all__" onclick="selectCtx(this)">All</button>
+  </div>
+
+  <div class="filter-row">
+    <div class="search-wrap">
+      <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" id="search" placeholder="Search by path or content…" oninput="renderList()" />
+    </div>
+    <span id="count" class="count"></span>
+    <button class="btn btn-sm" onclick="toggleNew()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      New
+    </button>
+  </div>
+
+  <div id="new-form" style="display:none" class="new-form">
+    <div class="new-form-fields">
+      <input type="text" id="new-path" placeholder="path/to/memory.md" />
+      <input type="text" id="new-ctx" placeholder="context (or 'global')" />
+    </div>
+    <textarea class="edit-area" id="new-content" placeholder="Memory content…"></textarea>
+    <div class="edit-actions">
+      <button class="btn btn-primary btn-sm" onclick="saveNew()">Save</button>
+      <button class="btn btn-sm" onclick="toggleNew()">Cancel</button>
+    </div>
+  </div>
+
+  <div id="memory-list" class="memory-list"></div>
+</div>
+
+<script>
+let memories = []
+let activeCtx = '__all__'
+
+function neo4jFetch(stmt, params = {}) {
+  const url = (document.getElementById('neo4j-url').value.trim() || 'http://localhost:7474') + '/db/neo4j/tx/commit'
+  const u = document.getElementById('neo4j-user').value.trim()
+  const p = document.getElementById('neo4j-pass').value.trim()
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Authorization': 'Basic ' + btoa(u + ':' + p) },
+    body: JSON.stringify({ statements: [{ statement: stmt, parameters: params }] })
+  }).then(r => r.json())
+}
+
+function setStatus(msg, type = '') {
+  const el = document.getElementById('status')
+  el.textContent = msg
+  el.className = 'status ' + type
+}
+
+async function loadMemories() {
+  setStatus('Loading…')
+  try {
+    const res = await neo4jFetch('MATCH (m:Memory) RETURN m.path AS path, m.content AS content, m.context AS context, m.updated_at AS updated ORDER BY m.updated_at DESC')
+    if (res.errors?.length) throw new Error(res.errors[0].message)
+    memories = (res.results?.[0]?.data ?? []).map(d => ({ path: d.row[0], content: d.row[1], context: d.row[2] || 'global', updated: d.row[3] }))
+    setStatus(memories.length + ' loaded', 'ok')
+    rebuildChips()
+    renderList()
+  } catch(e) { setStatus(e.message, 'err') }
+}
+
+function rebuildChips() {
+  const ctxs = [...new Set(memories.map(m => m.context))].sort()
+  const row = document.getElementById('context-chips')
+  row.innerHTML = '<button class="ctx-chip active" data-ctx="__all__" onclick="selectCtx(this)">All</button>'
+  ctxs.forEach(c => {
+    const el = document.createElement('button')
+    el.className = 'ctx-chip'
+    el.dataset.ctx = c
+    el.textContent = c
+    el.onclick = function() { selectCtx(this) }
+    row.appendChild(el)
+  })
+}
+
+function selectCtx(el) {
+  document.querySelectorAll('.ctx-chip').forEach(c => c.classList.remove('active'))
+  el.classList.add('active')
+  activeCtx = el.dataset.ctx
+  renderList()
+}
+
+function getFiltered() {
+  const q = document.getElementById('search').value.toLowerCase()
+  return memories.filter(m => {
+    const matchCtx = activeCtx === '__all__' || m.context === activeCtx
+    const matchQ = !q || m.path?.toLowerCase().includes(q) || m.content?.toLowerCase().includes(q)
+    return matchCtx && matchQ
+  })
+}
+
+function chevSvg(open) {
+  return `<svg class="chev ${open ? 'open' : ''}" id="chev-IDX" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`
+}
+
+function renderList() {
+  const filtered = getFiltered()
+  document.getElementById('count').textContent = filtered.length + ' ' + (filtered.length === 1 ? 'memory' : 'memories')
+  const list = document.getElementById('memory-list')
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg><p>No memories found</p></div>'
+    return
+  }
+  list.innerHTML = filtered.map(m => {
+    const origIdx = memories.indexOf(m)
+    const ts = m.updated ? new Date(m.updated).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+    const chev = `<svg class="chev" id="chev-${origIdx}" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`
+    return `<div class="memory-card" id="card-${origIdx}">
+      <div class="card-header" onclick="toggleCard(${origIdx})">
+        <svg class="path-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+        <span class="card-path" title="${escHtml(m.path)}">${escHtml(m.path)}</span>
+        <span class="badge ${m.context === 'global' ? 'badge-global' : ''}">${escHtml(m.context)}</span>
+        ${chev}
+      </div>
+      <div class="card-body" id="body-${origIdx}">${escHtml(m.content || '')}</div>
+      <div class="card-footer" id="footer-${origIdx}">
+        <button class="btn btn-sm" onclick="startEdit(${origIdx});event.stopPropagation()">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteMemory(${origIdx});event.stopPropagation()">Delete</button>
+        ${ts ? `<span class="card-ts">${ts}</span>` : ''}
+      </div>
+      <div id="edit-${origIdx}"></div>
+    </div>`
+  }).join('')
+}
+
+function toggleCard(origIdx) {
+  const body = document.getElementById('body-' + origIdx)
+  const chev = document.getElementById('chev-' + origIdx)
+  const footer = document.getElementById('footer-' + origIdx)
+  const isOpen = body.classList.contains('open')
+  body.classList.toggle('open', !isOpen)
+  if (chev) chev.classList.toggle('open', !isOpen)
+  if (footer) footer.classList.toggle('hidden', isOpen)
+}
+
+function startEdit(origIdx) {
+  const m = memories[origIdx]
+  document.getElementById('body-' + origIdx).classList.remove('open')
+  const footer = document.getElementById('footer-' + origIdx)
+  if (footer) footer.style.display = 'none'
+  document.getElementById('edit-' + origIdx).innerHTML = `<div class="edit-wrap">
+    <div class="edit-fields">
+      <input type="text" id="ep-${origIdx}" value="${escHtml(m.path)}" />
+      <input type="text" id="ec-${origIdx}" value="${escHtml(m.context)}" />
+    </div>
+    <textarea class="edit-area" id="en-${origIdx}">${escHtml(m.content || '')}</textarea>
+    <div class="edit-actions">
+      <button class="btn btn-primary btn-sm" onclick="saveEdit(${origIdx})">Save</button>
+      <button class="btn btn-sm" onclick="cancelEdit(${origIdx})">Cancel</button>
+    </div>
+  </div>`
+}
+
+function cancelEdit(origIdx) {
+  document.getElementById('edit-' + origIdx).innerHTML = ''
+  const footer = document.getElementById('footer-' + origIdx)
+  if (footer) footer.style.display = ''
+}
+
+async function saveEdit(origIdx) {
+  const m = memories[origIdx]
+  const newPath = document.getElementById('ep-' + origIdx).value.trim()
+  const newCtx = document.getElementById('ec-' + origIdx).value.trim()
+  const newContent = document.getElementById('en-' + origIdx).value
+  setStatus('Saving…')
+  try {
+    const res = await neo4jFetch('MATCH (m:Memory {path:$old}) SET m.path=$path,m.content=$content,m.context=$ctx,m.updated_at=$now', { old: m.path, path: newPath, content: newContent, ctx: newCtx, now: new Date().toISOString() })
+    if (res.errors?.length) throw new Error(res.errors[0].message)
+    memories[origIdx] = { ...m, path: newPath, content: newContent, context: newCtx, updated: new Date().toISOString() }
+    setStatus('Saved', 'ok')
+    rebuildChips()
+    renderList()
+  } catch(e) { setStatus(e.message, 'err') }
+}
+
+async function deleteMemory(origIdx) {
+  const m = memories[origIdx]
+  if (!confirm('Delete "' + m.path + '"?')) return
+  setStatus('Deleting…')
+  try {
+    const res = await neo4jFetch('MATCH (m:Memory {path:$path}) DETACH DELETE m', { path: m.path })
+    if (res.errors?.length) throw new Error(res.errors[0].message)
+    memories.splice(origIdx, 1)
+    setStatus('Deleted', 'ok')
+    rebuildChips()
+    renderList()
+  } catch(e) { setStatus(e.message, 'err') }
+}
+
+function toggleNew() {
+  const f = document.getElementById('new-form')
+  const visible = f.style.display !== 'none'
+  f.style.display = visible ? 'none' : 'block'
+  if (!visible) document.getElementById('new-path').focus()
+}
+
+async function saveNew() {
+  const path = document.getElementById('new-path').value.trim()
+  const ctx = document.getElementById('new-ctx').value.trim() || 'global'
+  const content = document.getElementById('new-content').value
+  if (!path) return
+  setStatus('Saving…')
+  try {
+    const res = await neo4jFetch('MERGE (m:Memory {path:$path}) SET m.content=$content,m.context=$ctx,m.updated_at=$now', { path, content, ctx, now: new Date().toISOString() })
+    if (res.errors?.length) throw new Error(res.errors[0].message)
+    memories.unshift({ path, content, context: ctx, updated: new Date().toISOString() })
+    setStatus('Created', 'ok')
+    rebuildChips()
+    renderList()
+    toggleNew()
+    document.getElementById('new-path').value = ''
+    document.getElementById('new-content').value = ''
+    document.getElementById('new-ctx').value = ''
+  } catch(e) { setStatus(e.message, 'err') }
+}
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+}
+</script>

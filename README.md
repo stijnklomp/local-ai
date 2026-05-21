@@ -1,18 +1,5 @@
 # Local AI
 
-## Recommended models for "RTX 5080 16GB vRAM" GPU
-
-Coding:
-
-- qwen2.5-coder:32b
-- qwen2.5-coder:72b (If available but slower)
-
-General:
-
-- llama3.1:70b
-- llama3.1:8b (for speed)
-
-
 ## Setup with Docker sandbox
 
 Install [Ollama](https://ollama.com/) and [Docker sandbox](https://docs.docker.com/ai/sandboxes/get-started/)
@@ -175,4 +162,10 @@ curl -s -u neo4j:password \
   -H "Content-Type: application/json" \
   -X POST http://localhost:7474/db/neo4j/tx/commit \
   -d '{"statements":[{"statement":"MATCH (s:Session) REMOVE s.dream_watermark"}]}'
+```
+
+### Open UI
+
+```sh
+open file:///home/stijn/developer/personal/local-ai/neo4j_memory_manager.html
 ```
