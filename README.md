@@ -77,9 +77,10 @@ sudo ufw reload
 ollama run <model>
 ```
 
-## Run Docker sandbox with OpenCode
+## Run Docker sandbox with OpenCode and agent memory
 
 Create an [OpenCode config file](https://opencode.ai/docs/config/) at `~/.config/opencode/opencode.json`:
+*Note that you can copy the one from this repository.*
 
 opencode.json
 ```json
@@ -99,39 +100,10 @@ opencode.json
 }
 ```
 
-Run Docker Sandbox with OpenCode: (Automatically mounts current directory)
+Run Docker Sandbox with OpenCode from your desired directory: (Automatically mounts current directory)
 
 ```sh
-cp ~/.config/opencode/opencode.json . && sbx run opencode
-```
-
-## Run Docker sandbox with OpenCode and agent memory
-
-Follow through all "Run Docker sandbox with OpenCode" steps except for running running the sandbox.
-
-From current repo:
-```sh
-export LOCAL_AI_REPO_PATH="<path-to-local-ai-repo>"
-export AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH="<path-to-agent-memory-hooks-neo4j-repo>"
-export OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
-
-sudo mkdir -p "$OPENCODE_CONFIG_DIR/.opencode/plugins"
-sudo mkdir -p "$OPENCODE_CONFIG_DIR/hooks"
-sudo mkdir -p "$OPENCODE_CONFIG_DIR/plugins"
-sudo mkdir -p "$OPENCODE_CONFIG_DIR/dream"
-
-sudo cp "$LOCAL_AI_REPO_PATH/docker-compose.yml" "$OPENCODE_CONFIG_DIR/docker-compose.yml"
-sudo cp "$LOCAL_AI_REPO_PATH/Dockerfile.dream" "$OPENCODE_CONFIG_DIR/Dockerfile.dream"
-
-sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/.opencode/plugins/neo4j-memory.js" "$OPENCODE_CONFIG_DIR/.opencode/plugins/neo4j-memory.js"
-sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/inject_memory.js" "$OPENCODE_CONFIG_DIR/hooks/"
-sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/hooks/log_event.py" "$OPENCODE_CONFIG_DIR/hooks/"
-sudo cp "$AGENT_MEMORY_HOOKS_NEO4J_REPO_PATH/dream/dream.py" "$OPENCODE_CONFIG_DIR/dream/"
-```
-
-Run Docker Sandbox with OpenCode: (Automatically mounts current directory)
-
-```sh
+# Update `LOCAL_AI_REPO_DIR` in the file first before running the following command
 ./run-opencode-in-docker-sandbox.sh
 ```
 
@@ -141,9 +113,6 @@ Directly from inside the Docker Sandbox:
 
 ```sh
 docker build -t dream-phase -f Dockerfile.dream . && docker run dream-phase --model qwen3:14b-fp16 --context my-project
-
-# Outside Docker sandbox
-ollama stop qwen2.5-coder:14b
 ```
 
 ### Wipe all memory
@@ -168,4 +137,15 @@ curl -s -u neo4j:password \
 
 ```sh
 open file:///home/stijn/developer/personal/local-ai/neo4j_memory_manager.html
+```
+
+## Recommendations
+
+- It's advised to add the following to your global gitignore:
+
+```sh
+hooks/
+.opencode/
+dream/
+opencode.json
 ```
