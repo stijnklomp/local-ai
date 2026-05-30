@@ -154,8 +154,5 @@ open file:///home/stijn/developer/personal/local-ai/neo4j_memory_manager.html
 
 ```sh
 hooks/
-.opencode/
 dream/
-opencode.json
-auth.json
 ```

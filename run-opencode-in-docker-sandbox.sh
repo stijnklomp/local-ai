@@ -34,12 +34,17 @@ SANDBOX_NAME="opencode-$(basename $PWD)"
 
 if ! sbx ls | grep -q "^$SANDBOX_NAME "; then
   sbx create opencode .
-  sbx exec "$SANDBOX_NAME" -- sudo mkdir -p /home/agent/.config/opencode
+  sbx exec "$SANDBOX_NAME" -- sudo mkdir -p /home/agent/.config/opencode/skills
   sbx exec "$SANDBOX_NAME" -- sudo mkdir -p /home/agent/.local/share/opencode
   sbx exec "$SANDBOX_NAME" -- sudo chown -R agent:agent /home/agent/.config
   sbx exec "$SANDBOX_NAME" -- sudo chown -R agent:agent /home/agent/.local
 fi
 
 sbx cp "$OPENCODE_CONFIG_DIR/opencode.json" "$SANDBOX_NAME:/home/agent/.config/opencode/opencode.json"
+
+if [ -d "$OPENCODE_CONFIG_DIR/skills" ]; then
+    sbx cp "$OPENCODE_CONFIG_DIR/skills/." "$SANDBOX_NAME:/home/agent/.config/opencode/skills"
+fi
+
 sbx cp "$OPENCODE_APPLICATION_DATA_DIR/auth.json" "$SANDBOX_NAME:/home/agent/.local/share/opencode/auth.json"
 sbx run "$SANDBOX_NAME"
