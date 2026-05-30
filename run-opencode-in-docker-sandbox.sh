@@ -1,9 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ "${1:-}" = "--use-local-memory" ]; then
-  LOCAL_AI_REPO_DIR="<path-to-local-ai-repo>"
+LOCAL_AI_REPO_DIR="<path-to-local-ai-repo>"
 
+SKIP_SKILLS_PATH=false
+for arg in "$@"; do
+  if [ "$arg" = "--skip-skills-path" ]; then
+    SKIP_SKILLS_PATH=true
+    break
+  fi
+done
+
+if [ "${1:-}" = "--use-local-memory" ]; then
   echo "Setting up Agent memory and Neo4j..."
   # Agent memory
   cp -r $LOCAL_AI_REPO_DIR/hooks .
@@ -47,4 +55,11 @@ if [ -d "$OPENCODE_CONFIG_DIR/skills" ]; then
 fi
 
 sbx cp "$OPENCODE_APPLICATION_DATA_DIR/auth.json" "$SANDBOX_NAME:/home/agent/.local/share/opencode/auth.json"
+
+if [ "$SKIP_SKILLS_PATH" = false ] && [ ! -f "opencode.json" ]; then
+  sbx cp "$LOCAL_AI_REPO_DIR/opencode_skills_path.json" "$SANDBOX_NAME:$PWD/opencode.json"
+else
+  echo "Skipping opencode.json copy (either omitted by flag or file already exists locally)."
+fi
+
 sbx run "$SANDBOX_NAME"

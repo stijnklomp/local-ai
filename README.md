@@ -77,9 +77,9 @@ sudo ufw reload
 ollama run <model>
 ```
 
-## Run Docker sandbox with OpenCode (and local agent memory)
+## Run Docker sandbox with Opencode (and local agent memory)
 
-Create an [OpenCode config file](https://opencode.ai/docs/config/) at `~/.config/opencode/opencode.json`:
+Create an [Opencode config file](https://opencode.ai/docs/config/) at `~/.config/opencode/opencode.json`:
 *Note that you can copy the one from this repository.*
 
 opencode.json
@@ -100,13 +100,18 @@ opencode.json
 }
 ```
 
-Run Docker Sandbox with OpenCode from your desired directory: (Automatically mounts current directory)
+Run Docker Sandbox with Opencode from your desired directory: (Automatically mounts current directory)
 
 ```sh
+# Update `LOCAL_AI_REPO_DIR` in the file first before running any of the following commands
+
 ./run-opencode-in-docker-sandbox.sh
 
+# By default the `opencode_skills_path.json` file is copied into the working directory as `opencode.json`. This is useful when working with multiple git repos as child directories as it allows you to update the "skills" key to tell Opencode to look for skills in the child git repos. To not include this, specify the `--skip-skills-path` flag
+# Note that if an opencode.json already exists in the current working directory then it won't copy it in even if the flag is not provided. This allows you to update the file to include the git sub directories and load the Docker Sandbox without it overriding it.
+./run-opencode-in-docker-sandbox.sh --skip-skills-path
+
 # Use with local memory and context injection
-# Update `LOCAL_AI_REPO_DIR` in the file first before running the following command
 ./run-opencode-in-docker-sandbox.sh --use-local-memory
 ```
 
