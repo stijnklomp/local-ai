@@ -77,7 +77,7 @@ sudo ufw reload
 ollama run <model>
 ```
 
-## Run Docker sandbox with OpenCode and agent memory
+## Run Docker sandbox with OpenCode (and local agent memory)
 
 Create an [OpenCode config file](https://opencode.ai/docs/config/) at `~/.config/opencode/opencode.json`:
 *Note that you can copy the one from this repository.*
@@ -103,10 +103,21 @@ opencode.json
 Run Docker Sandbox with OpenCode from your desired directory: (Automatically mounts current directory)
 
 ```sh
+# Prerequisites:
 # Update `LOCAL_AI_REPO_DIR` in the file first before running the following command
+
 ./run-opencode-in-docker-sandbox.sh
+
+# Use with local memory and context injection
+./run-opencode-in-docker-sandbox.sh --use-local-memory
 ```
 
+Update the Docker Sandbox image:
+```sh
+docker pull docker/sandbox-templates:opencode
+```
+
+## Instructions when running the local memory
 ### Run Dream phase: (Used for consolidating memory)
 
 Directly from inside the Docker Sandbox:
@@ -148,4 +159,5 @@ hooks/
 .opencode/
 dream/
 opencode.json
+auth.json
 ```
