@@ -103,12 +103,10 @@ opencode.json
 Run Docker Sandbox with OpenCode from your desired directory: (Automatically mounts current directory)
 
 ```sh
-# Prerequisites:
-# Update `LOCAL_AI_REPO_DIR` in the file first before running the following command
-
 ./run-opencode-in-docker-sandbox.sh
 
 # Use with local memory and context injection
+# Update `LOCAL_AI_REPO_DIR` in the file first before running the following command
 ./run-opencode-in-docker-sandbox.sh --use-local-memory
 ```
 

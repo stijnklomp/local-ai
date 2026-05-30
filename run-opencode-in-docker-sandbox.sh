@@ -1,15 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
-OPENCODE_APPLICATION_DATA_DIR="$HOME/.local/share/opencode"
-LOCAL_AI_REPO_DIR="<path-to-local-ai-repo>"
-
-# OpenCode config
-cp "$OPENCODE_CONFIG_DIR/opencode.json" ./opencode.json
-cp "$OPENCODE_APPLICATION_DATA_DIR/auth.json" ./auth.json
-
 if [ "${1:-}" = "--use-local-memory" ]; then
+  LOCAL_AI_REPO_DIR="<path-to-local-ai-repo>"
+
   echo "Setting up Agent memory and Neo4j..."
   # Agent memory
   cp -r $LOCAL_AI_REPO_DIR/hooks .
@@ -33,4 +27,19 @@ else
   echo "Skipping Agent memory and Neo4j initialization."
 fi
 
-sbx run opencode
+OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
+OPENCODE_APPLICATION_DATA_DIR="$HOME/.local/share/opencode"
+
+SANDBOX_NAME="opencode-$(basename $PWD)"
+
+if ! sbx ls | grep -q "^$SANDBOX_NAME "; then
+  sbx create opencode .
+  sbx exec "$SANDBOX_NAME" -- sudo mkdir -p /home/agent/.config/opencode
+  sbx exec "$SANDBOX_NAME" -- sudo mkdir -p /home/agent/.local/share/opencode
+  sbx exec "$SANDBOX_NAME" -- sudo chown -R agent:agent /home/agent/.config
+  sbx exec "$SANDBOX_NAME" -- sudo chown -R agent:agent /home/agent/.local
+fi
+
+sbx cp "$OPENCODE_CONFIG_DIR/opencode.json" "$SANDBOX_NAME:/home/agent/.config/opencode/opencode.json"
+sbx cp "$OPENCODE_APPLICATION_DATA_DIR/auth.json" "$SANDBOX_NAME:/home/agent/.local/share/opencode/auth.json"
+sbx run "$SANDBOX_NAME"
