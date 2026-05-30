@@ -58,6 +58,9 @@ sbx cp "$OPENCODE_APPLICATION_DATA_DIR/auth.json" "$SANDBOX_NAME:/home/agent/.lo
 
 if [ "$SKIP_SKILLS_PATH" = false ] && [ ! -f "opencode.json" ]; then
   sbx cp "$LOCAL_AI_REPO_DIR/opencode_skills_path.json" "$SANDBOX_NAME:$PWD/opencode.json"
+  if command -v git &>/dev/null && ! git rev-parse --git-dir &>/dev/null; then
+    git init
+  fi
 else
   echo "Skipping opencode.json copy (either omitted by flag or file already exists locally)."
 fi

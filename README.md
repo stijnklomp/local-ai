@@ -109,6 +109,8 @@ Run Docker Sandbox with Opencode from your desired directory: (Automatically mou
 
 # By default the `opencode_skills_path.json` file is copied into the working directory as `opencode.json`. This is useful when working with multiple git repos as child directories as it allows you to update the "skills" key to tell Opencode to look for skills in the child git repos. To not include this, specify the `--skip-skills-path` flag
 # Note that if an opencode.json already exists in the current working directory then it won't copy it in even if the flag is not provided. This allows you to update the file to include the git sub directories and load the Docker Sandbox without it overriding it.
+# Note that it initializes a git repository in the current working directory if it is not already a git repo, unless the `--skip-skills-path` flag is provided, as this is required for Opencode to pick up on the opencode.json file in the current working directory
+# Replace "project/.opencode/skills" in `opencode_skills_path.json` with the sub-directory you have. Add more entries for more sub-directories.
 ./run-opencode-in-docker-sandbox.sh --skip-skills-path
 
 # Use with local memory and context injection
