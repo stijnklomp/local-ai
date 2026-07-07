@@ -1,6 +1,0 @@
-FROM python:3.12-slim
- 
-WORKDIR /dream
-COPY dream/dream.py .
- 
-ENTRYPOINT ["python3", "dream.py"]

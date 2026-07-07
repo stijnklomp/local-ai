@@ -77,28 +77,10 @@ sudo ufw reload
 ollama run <model>
 ```
 
-## Run Docker sandbox with Opencode (and local agent memory)
+## Run Docker sandbox with Opencode
 
 Create an [Opencode config file](https://opencode.ai/docs/config/) at `~/.config/opencode/opencode.json`:
 *Note that you can copy the one from this repository.*
-
-opencode.json
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "ollama": {
-      "npm": "@ai-sdk/openai-compatible",
-      "options": {
-        "baseURL": "http://host.docker.internal:11434/v1"
-      },
-      "models": {
-        ...
-      }
-    }
-  }
-}
-```
 
 Run Docker Sandbox with Opencode from your desired directory: (Automatically mounts current directory)
 
@@ -112,54 +94,19 @@ Run Docker Sandbox with Opencode from your desired directory: (Automatically mou
 # Note that it initializes a git repository in the current working directory if it is not already a git repo, unless the `--skip-skills-path` flag is provided, as this is required for Opencode to pick up on the opencode.json file in the current working directory
 # Replace "project/.opencode/skills" in `opencode_skills_path.json` with the sub-directory you have. Add more entries for more sub-directories.
 ./run-opencode-in-docker-sandbox.sh --skip-skills-path
-
-# Use with local memory and context injection
-./run-opencode-in-docker-sandbox.sh --use-local-memory
 ```
 
-Update the Docker Sandbox image:
+## Update Docker Sandbox image
+
 ```sh
 docker pull docker/sandbox-templates:opencode
 ```
 
-## Instructions when running the local memory
-### Run Dream phase: (Used for consolidating memory)
+## agentmemory
 
-Directly from inside the Docker Sandbox:
-
-```sh
-docker build -t dream-phase -f Dockerfile.dream . && docker run dream-phase --model qwen3:14b-fp16 --context my-project
-```
-
-### Wipe all memory
-
-Run on host:
-
-```sh
-# Remove all current memories
-curl -s -u neo4j:password \
-  -H "Content-Type: application/json" \
-  -X POST http://localhost:7474/db/neo4j/tx/commit \
-  -d '{"statements":[{"statement":"MATCH (m:Memory) DETACH DELETE m"}]}'
-
-# Reset watermarks so all sessions reprocess
-curl -s -u neo4j:password \
-  -H "Content-Type: application/json" \
-  -X POST http://localhost:7474/db/neo4j/tx/commit \
-  -d '{"statements":[{"statement":"MATCH (s:Session) REMOVE s.dream_watermark"}]}'
-```
 
 ### Open UI
 
 ```sh
-open file:///home/stijn/developer/personal/local-ai/neo4j_memory_manager.html
-```
-
-## Recommendations
-
-- It's advised to add the following to your global gitignore:
-
-```sh
-hooks/
-dream/
+open http://localhost:3113/#dashboard
 ```

@@ -1,39 +1,54 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "ollama:qwen3.6:35b",
+  "plugin": ["./plugins/agentmemory-capture.ts"],
+  "instructions": [
+    "~/.config/opencode/skills/docker-runtime/SKILL.md",
+    "~/.config/opencode/skills/git-workflow/SKILL.md",
+    "CRITICAL: When calling agentmemory MCP tools, always provide 'concepts' and 'files' as explicit structured arrays, never as flat strings or comma-separated text."
+  ],
+  "model": "opencode-go/deepseek-v4-flash",
   "permission": {
     "*": "allow"
   },
+  "mcp": {
+    "agentmemory": {
+      "type": "local",
+      "command": ["agentmemory", "mcp"],
+      "environment": {
+        "AGENTMEMORY_URL": "http://127.0.0.1:3111"
+      },
+      "enabled": true
+    }
+  },
   "provider": {
+    "opencode-go": {
+      "models": {
+        "deepseek-v4-flash": {
+          "options": {
+            "reasoningEffort": "max"
+          }
+        }
+      }
+    },
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Ollama (local)",
       "options": {
-        "baseURL": "http://host.docker.internal:11434/v1"
+        "baseURL": "http://172.17.0.1:11434/v1"
       },
       "models": {
-        "llama3.1:8b-instruct-q5_K_M": {
-          "name": "Llama 3.1 (8B) General"
+        "qwen2.5-coder:14b": {
+          "name": "QWen 2.5 (14B) Coding"
         },
-        "gemma4:latest": {
-          "name": "Gemma 4 (8B) General"
-        },
-        "llama3.3:70b": {
-          "name": "Llama 3.3 (70B) General high reasoning"
-        },
-        "deepseek-coder-v2:16b-lite-instruct-q4_K_M": {
-          "name": "Deepseek Coder 2 (16B) Coding"
-        },
-        "qwen3.6:27b": {
-          "name": "Qwen 3.6 (27B) Coding"
-        },
-        "qwen3.6:35b": {
-          "name": "Qwen 3.6 (35B) MoE Coding"
+        "deepseek-r1:32b": {
+          "name": "Deepseek (32B) Reasoning"
         }
       }
     }
   },
   "enabled_providers": [
-    "ollama"
+    "ollama",
+    "opencode",
+    "opencode-go"
   ]
 }
