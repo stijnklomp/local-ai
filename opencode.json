@@ -38,7 +38,10 @@
       },
       "models": {
         "qwen2.5-coder:14b": {
-          "name": "QWen 2.5 (14B) Coding"
+          "name": "Qwen 2.5 (14B) Coding"
+        },
+        "qwen2.5:14b": {
+          "name": "Qwen 2.5 (14B)"
         },
         "deepseek-r1:32b": {
           "name": "Deepseek (32B) Reasoning"

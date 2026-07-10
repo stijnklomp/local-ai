@@ -1,5 +1,7 @@
 # Local AI
 
+OpenCode running in a Docker sandbox, with persistent agent memory powered by local Ollama models.
+
 ## Prerequisites
 
 1. Run the install dependencies script one on the host to install all the required depenencies. (This script is written for Linux, specifically Debian. It may not work for another OS)
@@ -131,3 +133,18 @@ Open UI:
 open http://localhost:3113/#dashboard
 ```
 
+(RUNS AUTOMATICALLY — only needed for manual testing) consolidate-pipeline — Runs the 4-tier memory pipeline: (1) shift episodic observations into semantic facts, (2) detect procedural patterns across sessions, (3) apply memory decay, (4) reflect on clusters to synthesize insights.
+
+```sh
+curl -X POST http://localhost:3111/agentmemory/consolidate-pipeline \
+  -H "Content-Type: application/json" \
+  -d '{"tier":"all","force":true}'
+```
+
+(RUNS AUTOMATICALLY — only needed for manual testing) crystals/auto — Compresses completed action chains into compact "crystal" digests (narrative + outcomes + files affected + lessons). These keep long-term context without raw action bloat.
+
+```sh
+curl -X POST http://localhost:3111/agentmemory/crystals/auto \
+  -H "Content-Type: application/json" \
+  -d '{"olderThanDays":0}'
+```

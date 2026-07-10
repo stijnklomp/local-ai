@@ -1,3 +1,4 @@
+// Taken from `https://github.com/rohitg00/agentmemory/blob/v0.9.27/plugin/opencode/agentmemory-capture.ts`. All credit goes to the agentmemory project. I've slightly adjusted this file so it works well with OpenCode running in a sbx sandbox.
 import type { Plugin } from "@opencode-ai/plugin";
 import { spawnSync } from "child_process";
 
