@@ -79,10 +79,12 @@ ollama run <model>
 
 ## Run Docker sandbox with Opencode
 
-Create an [Opencode config file](https://opencode.ai/docs/config/) at `~/.config/opencode/opencode.json`:
+- Create an [Opencode config file](https://opencode.ai/docs/config/) at `~/.config/opencode/opencode.json`:
 *Note that you can copy the one from this repository.*
 
-Run Docker Sandbox with Opencode from your desired directory: (Automatically mounts current directory)
+- Copy the plugin(s) in `plugins/` to `~/.config/opencode/plugins/`. (Create the directory if it doesn't exist already)
+
+- Run Docker Sandbox with Opencode from your desired directory: (Automatically mounts current directory)
 
 ```sh
 # Update `LOCAL_AI_REPO_DIR` in the file first before running any of the following commands
@@ -93,7 +95,12 @@ Run Docker Sandbox with Opencode from your desired directory: (Automatically mou
 # Note that if an opencode.json already exists in the current working directory then it won't copy it in even if the flag is not provided. This allows you to update the file to include the git sub directories and load the Docker Sandbox without it overriding it.
 # Note that it initializes a git repository in the current working directory if it is not already a git repo, unless the `--skip-skills-path` flag is provided, as this is required for Opencode to pick up on the opencode.json file in the current working directory
 # Replace "project/.opencode/skills" in `opencode_skills_path.json` with the sub-directory you have. Add more entries for more sub-directories.
-./run-opencode-in-docker-sandbox.sh --skip-skills-path
+
+# By default the script kills stale socat child processes (accumulated from fork,reuseaddr) before starting a fresh one. To skip this, pass --no-kill-socat:
+./run-opencode-in-docker-sandbox.sh --no-kill-socat
+
+# Flags can be combined:
+./run-opencode-in-docker-sandbox.sh --skip-skills-path --no-kill-socat
 ```
 
 ## Update Docker Sandbox image
@@ -104,9 +111,20 @@ docker pull docker/sandbox-templates:opencode
 
 ## agentmemory
 
+After having started agentmemory once, you can add the following to `~/.agentmemory/.env` to allow it to reach out to local models:
+```sh
+OPENAI_API_KEY=ollama
+OPENAI_BASE_URL=http://localhost:11434/v1
 
-### Open UI
+GRAPH_EXTRACTION_ENABLED=false
+OPENAI_MODEL=deepseek-r1:32b
+OPENAI_TIMEOUT_MS=840000
+```
+*This can be used to build a graph in the UI for example.*
+
+Open UI:
 
 ```sh
 open http://localhost:3113/#dashboard
 ```
+

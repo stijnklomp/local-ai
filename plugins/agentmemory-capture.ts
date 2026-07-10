@@ -1,4 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin";
+import { spawnSync } from "child_process";
 
 const API = process.env.AGENTMEMORY_URL || "http://localhost:3111";
 const FILE_TOOLS = new Set(["Read", "Write", "Edit", "Glob", "Grep"]);
@@ -24,6 +25,34 @@ async function post(path: string, body: Record<string, unknown>, timeoutMs = 500
     });
   } catch (e) {
     if (DEBUG) console.error(`[agentmemory] POST ${path} failed:`, (e as Error).message);
+  }
+}
+
+// Synchronous POST using spawnSync + curl.  Blocks the process until the
+// HTTP request completes (or times out).  Used in global.disposed because
+// OpenCode does not await plugin event handlers during shutdown — without
+// this the Node process exits before the fetch() promises resolve and
+// sessions are left dangling in agentmemory.
+function postSync(path: string, body: Record<string, unknown>, timeoutMs = 10000): void {
+  try {
+    const args: string[] = [
+      "-s", "-X", "POST",
+      `${API}/agentmemory${path}`,
+      "-H", "Content-Type: application/json",
+    ];
+    if (SECRET) {
+      args.push("-H", `Authorization: Bearer ${SECRET}`);
+    }
+    args.push("-d", JSON.stringify(body), "--max-time", String(Math.ceil(timeoutMs / 1000)));
+    const proc = spawnSync("curl", args, { timeout: timeoutMs, stdio: "ignore" });
+    if (proc.error && DEBUG) {
+      console.error(`[agentmemory] sync POST ${path} failed:`, proc.error.message);
+    }
+    if (proc.status !== 0 && proc.status !== null && DEBUG) {
+      console.error(`[agentmemory] sync POST ${path} exit code:`, proc.status);
+    }
+  } catch (e) {
+    if (DEBUG) console.error(`[agentmemory] sync POST ${path} threw:`, (e as Error).message);
   }
 }
 
@@ -278,6 +307,10 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
         seenToolCallIds.delete(sid);
         contextInjectedSessions.delete(sid);
       }
+
+      // ── global.disposed ──
+      // NOTE: this event does NOT exist in OpenCode's plugin API.
+      // Cleanup is handled via the top-level `dispose` hook below.
 
       // ── session.error ──
       if (type === "session.error") {
@@ -682,6 +715,27 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
       } else {
         pendingConfig = payload;
       }
+    },
+
+    // ── dispose ──
+    // Called when OpenCode shuts down or the plugin is unloaded.
+    // This is the correct lifecycle hook for cleanup — `global.disposed`
+    // is NOT an event that OpenCode emits.
+    dispose: async () => {
+      const allSids = new Set(stashedFiles.keys());
+      if (activeSessionId) allSids.add(activeSessionId);
+      for (const sid of allSids) {
+        postSync("/summarize", { sessionId: sid });
+        postSync("/session/end", { sessionId: sid });
+      }
+      postSync("/crystals/auto", { olderThanDays: 7 }, 30000);
+      postSync("/consolidate-pipeline", { tier: "all", force: true }, 30000);
+      activeSessionId = null;
+      stashedFiles.clear();
+      seenSubtaskIds.clear();
+      seenToolCallIds.clear();
+      startContextCache.clear();
+      contextInjectedSessions.clear();
     },
   };
 };

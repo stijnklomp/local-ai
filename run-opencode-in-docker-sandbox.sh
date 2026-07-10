@@ -5,47 +5,56 @@ LOCAL_AI_REPO_DIR="$HOME/developer/personal/local-ai"
 OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
 OPENCODE_APPLICATION_DATA_DIR="$HOME/.local/share/opencode"
 
-AGENTMEMORY_DIR="$HOME/.local/share/agentmemory"
 SANDBOX_NAME="opencode-$(basename $PWD)"
+# AGENTMEMORY_DIR="$HOME/.local/share/agentmemory"
 
+# if ! curl -s http://localhost:3111/agentmemory/health > /dev/null; then
+#   echo "agentmemory is not running. Starting background daemon..."
+
+#   mkdir -p "$AGENTMEMORY_DIR"
+
+#   export LLM_PROVIDER="ollama"
+#   export LLM_MODEL="deepseek-r1:32b"
+#   export HOST="0.0.0.0"
+
+#   (cd "$AGENTMEMORY_DIR" && nohup npx @agentmemory/agentmemory > /tmp/agentmemory_daemon.log 2>&1 &)
+
+#   echo "Waiting for agentmemory to initialize..."
+
+#   ready=false
+#   for i in $(seq 1 90); do
+#     if curl -fsS http://localhost:3111/agentmemory/health >/dev/null 2>&1; then
+#       echo "agentmemory is online."
+#       ready=true
+#       break
+#     fi
+#     sleep 1
+#   done
+
+#   if [ "$ready" != true ]; then
+#     echo "ERROR: agentmemory took too long to start." >&2
+#     echo "Last 40 lines of /tmp/agentmemory_daemon.log:" >&2
+#     tail -40 /tmp/agentmemory_daemon.log >&2
+#     exit 1
+#   fi
+# else
+#   echo "agentmemory is already running."
+# fi
 if ! curl -s http://localhost:3111/agentmemory/health > /dev/null; then
-  echo "agentmemory is not running. Starting background daemon..."
-
-  mkdir -p "$AGENTMEMORY_DIR"
-
-  export LLM_PROVIDER="ollama"
-  export LLM_MODEL="deepseek-r1:32b"
-  export HOST="0.0.0.0"
-
-  (cd "$AGENTMEMORY_DIR" && nohup npx @agentmemory/agentmemory > /tmp/agentmemory_daemon.log 2>&1 &)
-
-  echo "Waiting for agentmemory to initialize..."
-
-  ready=false
-  for i in $(seq 1 90); do
-    if curl -fsS http://localhost:3111/agentmemory/health >/dev/null 2>&1; then
-      echo "agentmemory is online."
-      ready=true
-      break
-    fi
-    sleep 1
-  done
-
-  if [ "$ready" != true ]; then
-    echo "ERROR: agentmemory took too long to start." >&2
-    echo "Last 40 lines of /tmp/agentmemory_daemon.log:" >&2
-    tail -40 /tmp/agentmemory_daemon.log >&2
-    exit 1
-  fi
-else
-  echo "agentmemory is already running."
+  echo "ERROR: agentmemory is not running." >&2
+  echo "Start it manually with:" >&2
+  echo " cd $HOME/.local/share/agentmemory && NODE_OPTIONS='--max-old-space-size=4096' agentmemory" >&2
+  exit 1
 fi
 
 SKIP_SKILLS_PATH=false
+KILL_SOCAT=true
 for arg in "$@"; do
   if [ "$arg" = "--skip-skills-path" ]; then
     SKIP_SKILLS_PATH=true
-    break
+  fi
+  if [ "$arg" = "--no-kill-socat" ]; then
+    KILL_SOCAT=false
   fi
 done
 
@@ -63,8 +72,8 @@ if ! sbx ls | grep -q "^$SANDBOX_NAME "; then
   done
 
   sbx exec "$SANDBOX_NAME" -- sudo apt-get update -y
-  sbx exec "$SANDBOX_NAME" -- sudo apt-get install -y socat
-  echo "socat installed."
+  sbx exec "$SANDBOX_NAME" -- sudo apt-get install -y socat curl
+  echo "socat and curl installed."
 
   AGENTMEMORY_MCP_TARBALL="$LOCAL_AI_REPO_DIR/dependencies/agentmemory-mcp.tar.gz"
 
@@ -113,8 +122,11 @@ else
   echo "Skipping opencode.json copy (either omitted by flag or file already exists locally)."
 fi
 
-# Kill any existing socat instance from previous runs
-sbx exec "$SANDBOX_NAME" -- pkill -f "socat TCP-LISTEN:3111" || true
+# Kill stale socat child processes from previous runs (unless opted out)
+if [ "$KILL_SOCAT" = true ]; then
+  sbx exec "$SANDBOX_NAME" -- bash -c \
+    "pkill -f 'socat TCP-LISTEN:3111' 2>/dev/null; sleep 0.5; pkill -f 'socat TCP-LISTEN:3111' 2>/dev/null" || true
+fi
 
 # Start socat in the background inside the sandbox
 sbx exec "$SANDBOX_NAME" -- bash -c \
