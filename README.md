@@ -1,5 +1,19 @@
 # Local AI
 
+## Prerequisites
+
+1. Run the install dependencies script one on the host to install all the required depenencies. (This script is written for Linux, specifically Debian. It may not work for another OS)
+
+```sh
+./install-dependencies.sh
+```
+
+2. Copy the environment values from the `agentmemory.env` file into `~/.agentmemory/.env`:
+
+```sh
+cp agentmemory.env ~/.agentmemory/.env
+```
+
 ## Setup with Docker sandbox
 
 Install [Ollama](https://ollama.com/) and [Docker sandbox](https://docs.docker.com/ai/sandboxes/get-started/)
@@ -110,17 +124,6 @@ docker pull docker/sandbox-templates:opencode
 ```
 
 ## agentmemory
-
-After having started agentmemory once, you can add the following to `~/.agentmemory/.env` to allow it to reach out to local models:
-```sh
-OPENAI_API_KEY=ollama
-OPENAI_BASE_URL=http://localhost:11434/v1
-
-GRAPH_EXTRACTION_ENABLED=false
-OPENAI_MODEL=deepseek-r1:32b
-OPENAI_TIMEOUT_MS=840000
-```
-*This can be used to build a graph in the UI for example.*
 
 Open UI:
 
