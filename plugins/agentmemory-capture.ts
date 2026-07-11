@@ -15,6 +15,30 @@ function authHeaders(): Record<string, string> {
   return headers;
 }
 
+async function endStaleSessions(
+  excludeSessionId: string | null,
+  project: string,
+): Promise<void> {
+  try {
+    const res = await fetch(`${API}/agentmemory/sessions`, {
+      signal: AbortSignal.timeout(5000),
+      headers: authHeaders(),
+    });
+    if (!res.ok) return;
+    const body = (await res.json()) as {
+      sessions?: Array<{ id: string; project: string; status: string }>;
+    };
+    const sessions = body.sessions ?? [];
+    for (const s of sessions) {
+      if (s.project === project && s.status === "active" && s.id !== excludeSessionId) {
+        await post("/session/end", { sessionId: s.id });
+      }
+    }
+  } catch {
+    // best-effort; new session starts regardless
+  }
+}
+
 async function post(path: string, body: Record<string, unknown>, timeoutMs = 5000): Promise<void> {
   try {
     await fetch(`${API}/agentmemory${path}`, {
@@ -213,6 +237,12 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
         seenSubtaskIds.delete(activeSessionId);
         seenToolCallIds.delete(activeSessionId);
         contextInjectedSessions.delete(activeSessionId);
+        // End any stale active sessions for this project before starting
+        // a new one.  This prevents sessions from accumulating when the
+        // sandbox is reused but OpenCode starts a fresh process each time
+        // (e.g. `sbx run`).
+        await endStaleSessions(activeSessionId, projectPath);
+
         // Snapshot the session id locally — `activeSessionId` is mutable
         // and another `session.created` event during the await could
         // rebind it, causing context to be cached against the wrong key.
