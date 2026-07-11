@@ -1,4 +1,3 @@
-// Taken from `https://github.com/rohitg00/agentmemory/blob/v0.9.27/plugin/opencode/agentmemory-capture.ts`. All credit goes to the agentmemory project. I've slightly adjusted this file so it works well with OpenCode running in a sbx sandbox.
 import type { Plugin } from "@opencode-ai/plugin";
 import { spawnSync } from "child_process";
 
@@ -30,7 +29,7 @@ async function post(path: string, body: Record<string, unknown>, timeoutMs = 500
 }
 
 // Synchronous POST using spawnSync + curl.  Blocks the process until the
-// HTTP request completes (or times out).  Used in global.disposed because
+// HTTP request completes (or times out).  Used in dispose because
 // OpenCode does not await plugin event handlers during shutdown — without
 // this the Node process exits before the fetch() promises resolve and
 // sessions are left dangling in agentmemory.
@@ -308,10 +307,6 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
         seenToolCallIds.delete(sid);
         contextInjectedSessions.delete(sid);
       }
-
-      // ── global.disposed ──
-      // NOTE: this event does NOT exist in OpenCode's plugin API.
-      // Cleanup is handled via the top-level `dispose` hook below.
 
       // ── session.error ──
       if (type === "session.error") {
@@ -722,15 +717,27 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
     // Called when OpenCode shuts down or the plugin is unloaded.
     // This is the correct lifecycle hook for cleanup — `global.disposed`
     // is NOT an event that OpenCode emits.
+    //
+    // End ALL sessions first via synchronous HTTP calls (postSync) so
+    // every session is marked completed even if the process is killed
+    // during summarization or consolidation.  The previous sequential
+    // for-loop called /summarize before /session/end, which blocked for
+    // its full timeout on each iteration and left later sessions dangling.
     dispose: async () => {
       const allSids = new Set(stashedFiles.keys());
       if (activeSessionId) allSids.add(activeSessionId);
       for (const sid of allSids) {
-        postSync("/summarize", { sessionId: sid });
         postSync("/session/end", { sessionId: sid });
       }
-      postSync("/crystals/auto", { olderThanDays: 7 }, 30000);
-      postSync("/consolidate-pipeline", { tier: "all", force: true }, 30000);
+      // fire summarization + consolidation as best-effort async work.
+      // /session/end already triggers event::session::stopped which
+      // calls mem::summarize asynchronously, so explicit summarize
+      // calls are redundant but kept as a best-effort backup.
+      await Promise.all([
+        ...[...allSids].map(sid => post("/summarize", { sessionId: sid }, 30000)),
+        post("/crystals/auto", { olderThanDays: 7 }, 30000),
+        post("/consolidate-pipeline", { tier: "all", force: true }, 30000),
+      ]);
       activeSessionId = null;
       stashedFiles.clear();
       seenSubtaskIds.clear();
