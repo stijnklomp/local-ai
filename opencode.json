@@ -57,5 +57,8 @@
     "opencode",
     "opencode-go"
   ],
-  "autoupdate": false
+  "autoupdate": false,
+  "watcher": {
+    "ignore": ["node_modules/**", "dist/**"]
+  }
 }
