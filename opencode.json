@@ -56,5 +56,6 @@
     "ollama",
     "opencode",
     "opencode-go"
-  ]
+  ],
+  "autoupdate": false
 }
