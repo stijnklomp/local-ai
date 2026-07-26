@@ -30,6 +30,13 @@
         }
       }
     },
+    "openrouter": {
+      "models": {
+        "auto": {
+          "name": "Auto Router (dynamic)"
+        }
+      }
+    },
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Ollama (local)",
@@ -55,7 +62,8 @@
   "enabled_providers": [
     "ollama",
     "opencode",
-    "opencode-go"
+    "opencode-go",
+    "openrouter"
   ],
   "autoupdate": false,
   "watcher": {
