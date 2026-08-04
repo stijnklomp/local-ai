@@ -85,7 +85,8 @@ if ! sbx ls | grep -q "^$SANDBOX_NAME "; then
   cp "$AGENTMEMORY_MCP_TARBALL" ./agentmemory-mcp-tmp.tar.gz
   sbx exec "$SANDBOX_NAME" -- sudo mkdir -p /usr/local/lib/agentmemory-mcp
   sbx exec "$SANDBOX_NAME" -- sudo tar -xzf "$PWD/agentmemory-mcp-tmp.tar.gz" -C /usr/local/lib/agentmemory-mcp
-  sbx exec "$SANDBOX_NAME" -- sudo ln -sf /usr/local/lib/agentmemory-mcp/bin/agentmemory /usr/local/bin/agentmemory
+  sbx exec "$SANDBOX_NAME" -- sudo bash -c \
+    "printf '#!/bin/sh\nexec node /usr/local/lib/agentmemory-mcp/lib/node_modules/@agentmemory/agentmemory/dist/cli.mjs \"\$@\"\n' > /usr/local/bin/agentmemory && chmod +x /usr/local/bin/agentmemory"
   rm -f ./agentmemory-mcp-tmp.tar.gz
   echo "agentmemory installed."
 

@@ -8,6 +8,10 @@ OpenCode running in a Docker sandbox, with persistent agent memory powered by lo
 
 ```sh
 ./install-dependencies.sh
+
+# Optional: (These flags can also be chained)
+./install-dependencies.sh --skip-docker-sandbox
+./install-dependencies.sh --skip-agentmemory
 ```
 
 2. Copy the environment values from the `agentmemory.env` file into `~/.agentmemory/.env`:
