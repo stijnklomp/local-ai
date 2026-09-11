@@ -6,40 +6,21 @@ OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
 OPENCODE_APPLICATION_DATA_DIR="$HOME/.local/share/opencode"
 
 SANDBOX_NAME="opencode-$(basename $PWD)"
-# AGENTMEMORY_DIR="$HOME/.local/share/agentmemory"
 
-# if ! curl -s http://localhost:3111/agentmemory/health > /dev/null; then
-#   echo "agentmemory is not running. Starting background daemon..."
+# Small retry helper for sbx cp, to ride out the daemon-warmup race
+sbx_cp_retry() {
+  local tries=0
+  until sbx cp "$@"; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 5 ]; then
+      echo "ERROR: sbx cp failed after $tries attempts: $*" >&2
+      return 1
+    fi
+    echo "sbx cp failed, retrying in 2s (attempt $tries)..." >&2
+    sleep 2
+  done
+}
 
-#   mkdir -p "$AGENTMEMORY_DIR"
-
-#   export LLM_PROVIDER="ollama"
-#   export LLM_MODEL="deepseek-r1:32b"
-#   export HOST="0.0.0.0"
-
-#   (cd "$AGENTMEMORY_DIR" && nohup npx @agentmemory/agentmemory > /tmp/agentmemory_daemon.log 2>&1 &)
-
-#   echo "Waiting for agentmemory to initialize..."
-
-#   ready=false
-#   for i in $(seq 1 90); do
-#     if curl -fsS http://localhost:3111/agentmemory/health >/dev/null 2>&1; then
-#       echo "agentmemory is online."
-#       ready=true
-#       break
-#     fi
-#     sleep 1
-#   done
-
-#   if [ "$ready" != true ]; then
-#     echo "ERROR: agentmemory took too long to start." >&2
-#     echo "Last 40 lines of /tmp/agentmemory_daemon.log:" >&2
-#     tail -40 /tmp/agentmemory_daemon.log >&2
-#     exit 1
-#   fi
-# else
-#   echo "agentmemory is already running."
-# fi
 if ! curl -s http://localhost:3111/agentmemory/health > /dev/null; then
   echo "ERROR: agentmemory is not running." >&2
   echo "Start it manually with:" >&2
@@ -81,7 +62,7 @@ if ! sbx ls | grep -q "^$SANDBOX_NAME "; then
     echo "ERROR: $AGENTMEMORY_MCP_TARBALL not found. Run install-dependencies.sh first." >&2
     exit 1
   fi
- 
+
   cp "$AGENTMEMORY_MCP_TARBALL" ./agentmemory-mcp-tmp.tar.gz
   sbx exec "$SANDBOX_NAME" -- sudo mkdir -p /usr/local/lib/agentmemory-mcp
   sbx exec "$SANDBOX_NAME" -- sudo tar -xzf "$PWD/agentmemory-mcp-tmp.tar.gz" -C /usr/local/lib/agentmemory-mcp
@@ -98,24 +79,24 @@ if ! sbx ls | grep -q "^$SANDBOX_NAME "; then
   sbx exec "$SANDBOX_NAME" -- sudo chown -R agent:agent /home/agent/.local
 fi
 
-sbx cp "$OPENCODE_CONFIG_DIR/opencode.json" "$SANDBOX_NAME:/home/agent/.config/opencode/opencode.json"
+sbx_cp_retry "$OPENCODE_CONFIG_DIR/opencode.json" "$SANDBOX_NAME:/home/agent/.config/opencode/opencode.json"
 
 if [ -d "$OPENCODE_CONFIG_DIR/skills" ]; then
-    sbx cp "$OPENCODE_CONFIG_DIR/skills/." "$SANDBOX_NAME:/home/agent/.config/opencode/skills"
+    sbx_cp_retry "$OPENCODE_CONFIG_DIR/skills/." "$SANDBOX_NAME:/home/agent/.config/opencode/skills"
 fi
 
 if [ -d "$OPENCODE_CONFIG_DIR/plugins" ]; then
-    sbx cp "$OPENCODE_CONFIG_DIR/plugins/." "$SANDBOX_NAME:/home/agent/.config/opencode/plugins"
+    sbx_cp_retry "$OPENCODE_CONFIG_DIR/plugins/." "$SANDBOX_NAME:/home/agent/.config/opencode/plugins"
 fi
 
 if [ -d "$OPENCODE_CONFIG_DIR/commands" ]; then
-    sbx cp "$OPENCODE_CONFIG_DIR/commands/." "$SANDBOX_NAME:/home/agent/.config/opencode/commands"
+    sbx_cp_retry "$OPENCODE_CONFIG_DIR/commands/." "$SANDBOX_NAME:/home/agent/.config/opencode/commands"
 fi
 
-sbx cp "$OPENCODE_APPLICATION_DATA_DIR/auth.json" "$SANDBOX_NAME:/home/agent/.local/share/opencode/auth.json"
+sbx_cp_retry "$OPENCODE_APPLICATION_DATA_DIR/auth.json" "$SANDBOX_NAME:/home/agent/.local/share/opencode/auth.json"
 
 if [ "$SKIP_SKILLS_PATH" = false ] && [ ! -f "opencode.json" ]; then
-  sbx cp "$LOCAL_AI_REPO_DIR/opencode_skills_path.json" "$SANDBOX_NAME:$PWD/opencode.json"
+  sbx_cp_retry "$LOCAL_AI_REPO_DIR/opencode_skills_path.json" "$SANDBOX_NAME:$PWD/opencode.json"
   if command -v git &>/dev/null && ! git rev-parse --git-dir &>/dev/null; then
     git init
   fi
