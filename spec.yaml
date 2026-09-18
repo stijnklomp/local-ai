@@ -1,0 +1,43 @@
+schemaVersion: "2"
+kind: sandbox
+name: opencode-agentmemory
+displayName: OpenCode + agentmemory
+description: >-
+  OpenCode with the agentmemory MCP connected directly to the host agentmemory
+  server, and the host opencode config, skills, plugins and commands mounted
+  read-only (edits on the host apply without rebuilding the kit).
+
+extends: opencode
+
+environment:
+  variables:
+    OPENCODE_CONFIG: /home/stijn/.config/opencode/opencode.json
+
+permissions:
+  network:
+    allow:
+      - registry.npmjs.org
+      - "*.npmjs.org"
+      - opencode.ai:443
+      - host.docker.internal:3111
+
+setup:
+  install:
+    - command: "command -v agentmemory || npm install -g @agentmemory/agentmemory@0.9.28 --no-fund --no-audit"
+      description: Install the pinned agentmemory MCP client
+    - command: "mkdir -p /home/agent/.config/opencode && ln -sfn /home/stijn/.config/opencode/skills /home/agent/.config/opencode/skills && ln -sfn /home/stijn/.config/opencode/commands /home/agent/.config/opencode/commands && ln -sfn /home/stijn/.config/opencode/plugins /home/agent/.config/opencode/plugins"
+      description: Symlink skills, commands and plugins from the read-only host mount
+
+agentInstructions:
+  content: |
+    ## Sandbox environment
+
+    - OpenCode config, skills, plugins and commands are mounted read-only from
+      the host at `/home/stijn/.config/opencode`. Edit them on the host; changes
+      apply without rebuilding this sandbox.
+    - The `agentmemory` MCP connects directly to the host agentmemory server at
+      `http://host.docker.internal:3111` (see the host opencode.json
+      `AGENTMEMORY_URL`). Make sure the host server is running before launching
+      the sandbox.
+    - Docker is available inside the sandbox; prefer it for running code.
+      `sudo` is passwordless for the `agent` user.

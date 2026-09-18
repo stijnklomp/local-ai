@@ -15,7 +15,7 @@
       "type": "local",
       "command": ["agentmemory", "mcp"],
       "environment": {
-        "AGENTMEMORY_URL": "http://127.0.0.1:3111"
+        "AGENTMEMORY_URL": "http://host.docker.internal:3111"
       },
       "enabled": true
     }
