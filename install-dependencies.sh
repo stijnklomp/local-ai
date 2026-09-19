@@ -21,9 +21,9 @@ for arg in "$@"; do
 done
 
 if [ "$SKIP_DOCKER_SANDBOX" = false ]; then
-  DOCKER_SANDBOX_INSTALL="$DEPENDENCIES_DIR/DockerSandboxes-linux-amd64-ubuntu2604.deb"
+  DOCKER_SANDBOX_INSTALL="$DEPENDENCIES_DIR/DockerSandboxes-linux-amd64-ubuntu2404.deb"
 
-  curl -L https://github.com/docker/sbx-releases/releases/download/v0.31.1/DockerSandboxes-linux-amd64-ubuntu2604.deb -o "$DOCKER_SANDBOX_INSTALL"
+  curl -L https://github.com/docker/sbx-releases/releases/download/v0.43.0/DockerSandboxes-linux-amd64-ubuntu2404.deb -o "$DOCKER_SANDBOX_INSTALL"
   sudo apt install "$DOCKER_SANDBOX_INSTALL"
   rm "$DOCKER_SANDBOX_INSTALL"
 else
