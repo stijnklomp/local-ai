@@ -15,6 +15,12 @@ if ! curl -fsS --max-time 2 \
   exit 1
 fi
 
-exec sbx run \
-  --name "$SANDBOX_NAME" \
-  "$SCRIPT_DIR" . ~/.config/opencode:ro
+if sbx ls -q | grep -Fxq "$SANDBOX_NAME"; then
+  exec sbx run --name "$SANDBOX_NAME"
+else
+  exec sbx run \
+    --name "$SANDBOX_NAME" \
+    "$SCRIPT_DIR" \
+    . \
+    ~/.config/opencode:ro
+fi
