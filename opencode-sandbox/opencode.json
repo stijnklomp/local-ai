@@ -59,10 +59,23 @@
           "name": "Deepseek (32B) Reasoning"
         }
       }
+    },
+    "llama-server": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "llama.cpp (local, RTX 5080)",
+      "options": {
+        "baseURL": "http://172.17.0.1:8080/v1"
+      },
+      "models": {
+        "Qwen3.8-27B-UD-IQ4_XS.gguf": {
+          "name": "Qwen 3.8 (27B) IQ4_XS, 256K ctx, MTP"
+        }
+      }
     }
   },
   "enabled_providers": [
     "ollama",
+    "llama-server",
     "opencode",
     "opencode-go",
     "openrouter"
