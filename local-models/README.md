@@ -5,7 +5,7 @@ Host-side setup for running local LLM servers and connecting them to the OpenCod
 Two runtimes are documented here:
 
 - **Ollama** — general-purpose local runtime, used by agentmemory and OpenCode today.
-- **llama.cpp adaptive KV streaming** — an experimental llama.cpp fork that runs a 27B model at up to 256K context on a 16 GB GPU by streaming the KV cache from pinned host RAM into a bounded GPU working set. See the [RTX 5080 guide](llama-cpp-adaptive-kv-streaming.md).
+- **llama.cpp adaptive KV streaming** — an experimental llama.cpp fork that runs a 27B model at up to 256K context on a 16 GB GPU by streaming the KV cache from pinned host RAM into a bounded GPU working set. The host only needs the NVIDIA driver, the CUDA 13 toolkit (installed by `scripts/install-cuda-host.sh`), `git` and Docker; the build itself runs in a Debian 13 container. See the [RTX 5080 guide](llama-cpp-adaptive-kv-streaming.md).
 
 ## How the sandbox reaches host services
 

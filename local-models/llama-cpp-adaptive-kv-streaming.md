@@ -20,31 +20,40 @@ MTP costs a little prefill speed and memory. These are single-run measurements f
 ## Prerequisites
 
 - NVIDIA driver new enough for CUDA 13 (Linux 580.65.06 or newer). Check with `nvidia-smi`; the driver's supported CUDA version is shown in the top-right.
-- CUDA Toolkit 13 with `nvcc` on `PATH`. If `nvcc --version` fails, install the toolkit from [NVIDIA's CUDA downloads](https://developer.nvidia.com/cuda-downloads). CUDA 13 is required for the optimized SM120 paths. Keep `GGML_CUDA_FA_ALL_QUANTS=ON` in the build (below); mixed Q8_0 K / Q4_0 V attention kernels need it.
-- `git`, `cmake` (3.14+) and a C++ toolchain (`sudo apt install cmake build-essential`).
-- Disk: ~30 GB free (clone ~0.5 GB, build several GB, model 13.3 GiB).
+- CUDA Toolkit 13 with `nvcc`, installed once on the host with `local-models/scripts/install-cuda-host.sh` (Debian 13). It installs `cuda-toolkit-13-2` from NVIDIA's Debian repository and prints the `PATH` lines to add. CUDA 13 is required for the optimized SM120 paths. Keep `GGML_CUDA_FA_ALL_QUANTS=ON` in the build (below); mixed Q8_0 K / Q4_0 V attention kernels need it.
+- `git` and `docker`. cmake and the C++ toolchain live in the builder container (`local-models/llama-builder.Dockerfile`), not on the host.
+- Disk: ~30 GB free (clone ~0.5 GB, toolkit ~5 GB, build several GB, model 13.3 GiB).
 - RAM: pinned host memory holds the full KV history, roughly 6–7 GiB at 262,144 tokens (and less at shorter contexts). 32 GB system RAM is comfortable; on 16 GB, lower `--ctx-size` (for example 131072 ≈ 3.3 GiB).
 - VRAM: the model weights (~13.3 GiB) plus the arena (~2.2 GiB) nearly fill the 16 GB card. Unload other GPU users first (see [Ollama coexistence](#ollama-coexistence)).
 
 ## Install
 
-The helper script clones the fork (default branch `feature/adaptive-kv-stream-v2`) into `local-models/llama.cpp-adaptive-kv-streaming/` and builds `llama-server`. Run it on the host from anywhere:
+Install the CUDA 13 toolkit on the host once (Debian 13):
+
+```sh
+local-ai/local-models/scripts/install-cuda-host.sh
+```
+
+The helper script clones the fork (default branch `feature/adaptive-kv-stream-v2`) into `local-models/llama.cpp-adaptive-kv-streaming/` and builds `llama-server` inside a Debian 13 container that uses the host's CUDA toolkit, so no cmake or C++ toolchain is needed on the host. Run it from anywhere:
 
 ```sh
 local-ai/local-models/scripts/install-llama-adaptive-kv.sh
 ```
 
-Or do it manually:
+Or do it manually (from the repository root):
 
 ```sh
 git clone https://github.com/RaymondHuang210129/llama.cpp-adaptive-kv-streaming.git local-models/llama.cpp-adaptive-kv-streaming
-cd local-models/llama.cpp-adaptive-kv-streaming
 
-cmake -S . -B build-v2 -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-v2 --target llama-server -j"$(nproc)"
+docker build -t local-ai/llama-builder:trixie -f local-models/llama-builder.Dockerfile local-models
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -w /src \
+  -v "$(pwd)/local-models/llama.cpp-adaptive-kv-streaming:/src" \
+  -v "$(readlink -f /usr/local/cuda):/usr/local/cuda:ro" \
+  local-ai/llama-builder:trixie \
+  bash -c 'cmake -S /src -B /src/build-v2 -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=120 && cmake --build /src/build-v2 --target llama-server -j$(nproc)'
 ```
 
-If `nvcc` cannot detect the GPU, add `-DCMAKE_CUDA_ARCHITECTURES=120` to the configure step.
+The build pins SM120 (`-DCMAKE_CUDA_ARCHITECTURES=120`), so it needs no GPU inside the container and only produces kernels for RTX 50-series cards.
 
 ### Model download
 
@@ -83,6 +92,8 @@ Equivalent manual command (from the clone directory):
   --fit off --no-mmproj \
   --host 0.0.0.0 --port 8080
 ```
+
+The run script points `LD_LIBRARY_PATH` at the toolkit's `lib64` (found via `nvcc`, or `/usr/local/cuda`) so the CUDA runtime libraries resolve without any system-wide changes. If you run `llama-server` by hand, do the same.
 
 ### Why these flags
 

@@ -6,6 +6,21 @@ LOCAL_MODELS_DIR="$(dirname "$SCRIPT_DIR")"
 LLAMA_DIR="$LOCAL_MODELS_DIR/llama.cpp-adaptive-kv-streaming"
 SERVER="$LLAMA_DIR/build-v2/bin/llama-server"
 
+CUDA_HOME=""
+if [ -x /usr/local/cuda/bin/nvcc ]; then
+  CUDA_HOME="$(readlink -f /usr/local/cuda)"
+else
+  for _p in /usr/local/cuda-13*/bin/nvcc; do
+    if [ -x "$_p" ]; then CUDA_HOME="$(dirname "$(dirname "$(readlink -f "$_p")")")"; fi
+  done
+fi
+if [ -z "$CUDA_HOME" ] && command -v nvcc >/dev/null 2>&1; then
+  CUDA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v nvcc)")")")"
+fi
+if [ -n "$CUDA_HOME" ] && [ -d "$CUDA_HOME/lib64" ]; then
+  export LD_LIBRARY_PATH="$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 MODEL="${MODEL:-$LOCAL_MODELS_DIR/models/Qwen3.8-27B-UD-IQ4_XS.gguf}"
 ARENA_MIB="${ARENA_MIB:-2240}"
 CTX_SIZE="${CTX_SIZE:-262144}"
