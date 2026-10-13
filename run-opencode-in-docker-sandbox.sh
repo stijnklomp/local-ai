@@ -40,9 +40,13 @@ else
   echo "  cd \$HOME/.local/share/agentmemory && NODE_OPTIONS='--max-old-space-size=4096' agentmemory" >&2
 fi
 
+echo "sandbox: checking for existing sandbox \"$SANDBOX_NAME\"..."
+
 if sbx ls -q | grep -Fxq "$SANDBOX_NAME"; then
+  echo "sandbox: attaching to existing sandbox \"$SANDBOX_NAME\"."
   exec sbx run --name "$SANDBOX_NAME"
 else
+  echo "sandbox: creating sandbox \"$SANDBOX_NAME\" (first run pulls the image and boots the VM, may take a few minutes)."
   exec sbx run \
     --name "$SANDBOX_NAME" \
     "$SCRIPT_DIR" \
