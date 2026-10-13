@@ -1,0 +1,25 @@
+# GPU monitor image: nvidia-smi plus a small reporting script (gpu.sh).
+# Run it through run-gpu.sh, which adds the --gpus all flag so the container
+# can see the host GPU.
+FROM debian:13-slim
+
+# nvidia-smi lives in the non-free components of the Debian repos. Enable
+# those first (Debian 13 uses the deb822-format debian.sources file).
+#
+# The package version (550) is older than a modern host driver, which is the
+# supported direction: older nvidia-smi clients work against newer kernel
+# drivers. Newer clients against older drivers can fail.
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's/^Components: .*/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources; \
+    else \
+        sed -i '/^deb /s/$/ contrib non-free non-free-firmware/' /etc/apt/sources.list; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        nvidia-smi \
+        ca-certificates; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY gpu.sh /usr/local/bin/gpu-monitor
+ENTRYPOINT ["gpu-monitor"]

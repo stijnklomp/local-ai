@@ -2,6 +2,15 @@
 
 Host-side setup for running local LLM servers and connecting them to the OpenCode sandbox in [`../opencode-sandbox/`](../opencode-sandbox/).
 
+## Monitoring & health checks
+
+GPU/VRAM monitoring (`nvidia-smi`) and model speed benchmarks live in [`monitor/`](monitor/README.md):
+
+```sh
+monitor/run-gpu.sh    # GPU utilization + VRAM per process (llama-server total highlighted)
+monitor/run-bench.sh  # AI speed: time-to-first-token and tokens/second
+```
+
 Two runtimes are documented here:
 
 - **Ollama** — general-purpose local runtime, used by agentmemory and OpenCode today.

@@ -36,7 +36,7 @@ if curl -fsS --max-time 2 \
 else
   echo "agentmemory: not running on the host; continuing without it." >&2
   echo >&2
-  echo "Start it manually with:" >&2
+  echo "Start it manually at any time with:" >&2
   echo "  cd \$HOME/.local/share/agentmemory && NODE_OPTIONS='--max-old-space-size=4096' agentmemory" >&2
 fi
 
