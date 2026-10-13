@@ -75,14 +75,17 @@ docker run --rm \
     -DGGML_CUDA_FA_ALL_QUANTS=ON \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-    -DCMAKE_CUDA_ARCHITECTURES=120 && \
+    -DCMAKE_CUDA_ARCHITECTURES=120 \
+    -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
+    -DCMAKE_EXE_LINKER_FLAGS='-Wl,-rpath-link,/usr/local/cuda/lib64 -Wl,-rpath,/usr/local/cuda/lib64' && \
   cmake --build /src/$BUILD_DIR --target llama-server -j\$(nproc)"
 
 SERVER="$LLAMA_DIR/$BUILD_DIR/bin/llama-server"
 [ -x "$SERVER" ] || fail "build finished but $SERVER was not found"
 
 if command -v ldd >/dev/null 2>&1; then
-  MISSING="$(LD_LIBRARY_PATH="$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$SERVER" | grep 'not found' || true)"
+  LD_PATHS="$(dirname "$SERVER"):$CUDA_HOME/lib64"
+  MISSING="$(LD_LIBRARY_PATH="$LD_PATHS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$SERVER" | grep 'not found' || true)"
   if [ -n "$MISSING" ]; then
     echo "warning: some libraries are not resolvable on this host:" >&2
     echo "$MISSING" >&2

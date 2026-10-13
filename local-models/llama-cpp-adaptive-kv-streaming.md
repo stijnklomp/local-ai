@@ -50,10 +50,10 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -w /src \
   -v "$(pwd)/local-models/llama.cpp-adaptive-kv-streaming:/src" \
   -v "$(readlink -f /usr/local/cuda):/usr/local/cuda:ro" \
   local-ai/llama-builder:trixie \
-  bash -c 'cmake -S /src -B /src/build-v2 -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=120 && cmake --build /src/build-v2 --target llama-server -j$(nproc)'
+  bash -c 'cmake -S /src -B /src/build-v2 -DGGML_CUDA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCMAKE_CUDA_ARCHITECTURES=120 -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,/usr/local/cuda/lib64 -Wl,-rpath,/usr/local/cuda/lib64" && cmake --build /src/build-v2 --target llama-server -j$(nproc)'
 ```
 
-The build pins SM120 (`-DCMAKE_CUDA_ARCHITECTURES=120`), so it needs no GPU inside the container and only produces kernels for RTX 50-series cards.
+The build pins SM120 (`-DCMAKE_CUDA_ARCHITECTURES=120`), so it needs no GPU inside the container and only produces kernels for RTX 50-series cards. The `-DCMAKE_EXE_LINKER_FLAGS` entry points the linker at the mounted toolkit: it is not registered in the container's system linker paths, so the CUDA runtime libraries (`libcudart.so.13`, `libcublas.so.13`) that the ggml CUDA shared library depends on need `-rpath-link` to resolve at link time (and `-rpath` for runtime). `-DCMAKE_BUILD_RPATH_USE_ORIGIN=ON` keeps the build-tree library paths relative (`$ORIGIN`), so the binary and the fork's shared libraries find each other when run from the host build directory.
 
 ### Model download
 
@@ -79,6 +79,12 @@ local-ai/local-models/scripts/run-llama-server.sh
 
 The script starts `llama-server` with the configuration below. Override defaults with environment variables: `ARENA_MIB`, `CTX_SIZE`, `DRAFT_N` (0 disables MTP), `BATCH_SIZE`, `LISTEN_HOST`, `LISTEN_PORT`, `MODEL`.
 
+On a 16 GB card with an active desktop session the qualified 2240 MiB arena may not fit (the compositor takes a few hundred MiB), so lower it explicitly. If the first request then aborts with a CUDA out-of-memory error in the MTP draft path, run without MTP (`DRAFT_N=0`):
+
+```sh
+ARENA_MIB=1856 DRAFT_N=0 ./scripts/run-llama-server.sh
+```
+
 Equivalent manual command (from the clone directory):
 
 ```sh
@@ -93,7 +99,7 @@ Equivalent manual command (from the clone directory):
   --host 0.0.0.0 --port 8080
 ```
 
-The run script points `LD_LIBRARY_PATH` at the toolkit's `lib64` (found via `nvcc`, or `/usr/local/cuda`) so the CUDA runtime libraries resolve without any system-wide changes. If you run `llama-server` by hand, do the same.
+The run script points `LD_LIBRARY_PATH` at the server's `build-v2/bin` (the fork links its ggml/llama/server libraries as shared objects there) and at the toolkit's `lib64` (found via `nvcc`, or `/usr/local/cuda`) so everything resolves without any system-wide changes. If you run `llama-server` by hand, do the same.
 
 ### Why these flags
 
@@ -115,7 +121,7 @@ Do not set `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1`: the qualified configuration runs
 
 ### Tuning
 
-- **Arena size**: `2240` MiB is the tested value on the 16 GB reference card. If startup reports the shared arena quota is insufficient, lower it in steps of 128 MiB until admission passes (the policy degrades gracefully; less arena means more streaming and slightly lower speed). If `nvidia-smi` shows plenty of free VRAM after load, you can raise it toward more resident KV.
+- **Arena size**: `2240` MiB is the tested value on the 16 GB reference card. If startup reports the shared arena quota is insufficient, lower it in steps of 128 MiB until admission passes (the policy degrades gracefully; less arena means more streaming and slightly lower speed). If `nvidia-smi` shows plenty of free VRAM after load, you can raise it toward more resident KV. On a desktop session the compositor (Xorg/GNOME, typically 300–400 MiB) counts against the budget, so expect to land below 2240 (for example 1856–1984) unless the card is headless. At reduced sizes the MTP draft path can exhaust the remaining transient VRAM at the first request (a hard `CUDA error: out of memory` abort in `ggml_cuda_pool_vmm::alloc`, not graceful streaming); disable MTP (`DRAFT_N=0`) in that case.
 - **Context vs host RAM**: KV host memory is roughly linear in context length (~24 KiB per token for this model at Q8_0 K / Q4_0 V, so ~6.4 GiB at 256K). Halve `--ctx-size` to halve it when system RAM is tight.
 - **Disable MTP** (`--spec-type` flags removed / `DRAFT_N=0`) when you prefer faster prefill over faster decode, or to save the MTP workspace and host snapshots.
 - **Vision**: enabling image requests is possible in this fork with `--mmproj mmproj-F16.gguf --shared-device-memory-mib <mib>` instead of `--kv-stream-arena-mib` (and `--spec-draft-type-k q8_0 --spec-draft-type-v q4_0` for MTP), but it reduces the KV working set and is outside the qualified text-only setup above.
@@ -153,6 +159,9 @@ The web UI is at `http://172.17.0.1:8080/` (and on the host at `http://localhost
 | CUDA device allocation / driver error | Not enough free VRAM. Close other GPU processes, `ollama stop` loaded models, and retry. |
 | Error naming a missing native attention query width | Kernel/build/geometry admission failure — rebuild as above; do not enlarge the arena. |
 | `nvcc` compile errors on older toolkits | CUDA 13 cannot compile pre-SM75 targets and older toolkits lack the SM120 paths. Install CUDA 13. |
+| `undefined reference to cuda...@libcudart.so.13` at link time | The linker cannot find the mounted toolkit's libraries. Use the install script (it passes `-DCMAKE_EXE_LINKER_FLAGS` with `-rpath-link`); a manual build must do the same. This is not a CUDA installation problem. |
+| `error while loading shared libraries: libllama-server-impl.so` at startup | The executable cannot find the fork's shared libraries next to it — the build embedded the container's build path. Rebuild with the install script (`-DCMAKE_BUILD_RPATH_USE_ORIGIN=ON`); the run script also adds `build-v2/bin` to `LD_LIBRARY_PATH`. |
+| `CUDA error: out of memory` in `ggml_cuda_pool_vmm::alloc` / `llama_kv_stream_mtp_proxy` at the first request | The MTP draft path needs transient VRAM beyond the arena; after lowering the arena (desktop systems) it does not fit and the fork aborts. Run with `DRAFT_N=0` or free VRAM. |
 | Slow first load | Weights are read from disk into VRAM (and the build is huge). Subsequent starts are faster once cached. |
 
 Report failures to the fork's repo with your GPU, driver, toolkit, build flags and the full log.

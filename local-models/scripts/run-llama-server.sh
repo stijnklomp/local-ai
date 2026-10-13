@@ -17,9 +17,12 @@ fi
 if [ -z "$CUDA_HOME" ] && command -v nvcc >/dev/null 2>&1; then
   CUDA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v nvcc)")")")"
 fi
+SERVER_DIR="$(dirname "$SERVER")"
+LD_PATHS="$SERVER_DIR"
 if [ -n "$CUDA_HOME" ] && [ -d "$CUDA_HOME/lib64" ]; then
-  export LD_LIBRARY_PATH="$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  LD_PATHS="$LD_PATHS:$CUDA_HOME/lib64"
 fi
+export LD_LIBRARY_PATH="$LD_PATHS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 MODEL="${MODEL:-$LOCAL_MODELS_DIR/models/Qwen3.8-27B-UD-IQ4_XS.gguf}"
 ARENA_MIB="${ARENA_MIB:-2240}"
