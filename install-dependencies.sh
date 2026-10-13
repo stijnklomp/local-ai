@@ -5,6 +5,8 @@ LOCAL_AI_REPO_DIR="$HOME/developer/personal/local-ai"
 DEPENDENCIES_DIR="$LOCAL_AI_REPO_DIR/dependencies"
 
 AGENTMEMORY_VERSION="0.9.30"
+DOCKER_SANDBOX_VERSION="0.48.0"
+TARGET_USER="${USER:-$(id -un)}"
 
 SKIP_DOCKER_SANDBOX=false
 SKIP_AGENTMEMORY=false
@@ -21,11 +23,47 @@ for arg in "$@"; do
 done
 
 if [ "$SKIP_DOCKER_SANDBOX" = false ]; then
-  DOCKER_SANDBOX_INSTALL="$DEPENDENCIES_DIR/DockerSandboxes-linux-amd64-ubuntu2404.deb"
+  DOCKER_SANDBOX_DEB="DockerSandboxes-linux-amd64-ubuntu2404.deb"
+  DOCKER_SANDBOX_INSTALL="$DEPENDENCIES_DIR/$DOCKER_SANDBOX_DEB"
+  DOCKER_SANDBOX_URL="https://github.com/docker/sbx-releases/releases/download/v${DOCKER_SANDBOX_VERSION}/${DOCKER_SANDBOX_DEB}"
 
-  curl -L https://github.com/docker/sbx-releases/releases/download/v0.43.0/DockerSandboxes-linux-amd64-ubuntu2404.deb -o "$DOCKER_SANDBOX_INSTALL"
+  curl -fL "$DOCKER_SANDBOX_URL" -o "$DOCKER_SANDBOX_INSTALL"
   sudo apt install "$DOCKER_SANDBOX_INSTALL"
   rm "$DOCKER_SANDBOX_INSTALL"
+
+  # Prerequisites for local sandboxes, from the official docs:
+  # https://docs.docker.com/ai/sandboxes/install/#linux
+  if id -nG "$TARGET_USER" | grep -qw kvm; then
+    echo "KVM: $TARGET_USER is already in the kvm group."
+  else
+    sudo groupadd -f kvm
+    sudo usermod -aG kvm "$TARGET_USER"
+    echo "Added $TARGET_USER to the kvm group. Sign out and back in (or run 'newgrp kvm') for the change to take effect."
+  fi
+
+  if [ -e /dev/kvm ] || lsmod 2>/dev/null | grep -q '^kvm'; then
+    echo "KVM: hardware virtualization is available."
+  else
+    echo "KVM: not enabled; attempting to load the KVM kernel modules..."
+    sudo modprobe kvm 2>/dev/null || true
+    if grep -qw vmx /proc/cpuinfo; then
+      sudo modprobe kvm_intel 2>/dev/null || true
+    elif grep -qw svm /proc/cpuinfo; then
+      sudo modprobe kvm_amd 2>/dev/null || true
+    fi
+
+    if [ -e /dev/kvm ] || lsmod 2>/dev/null | grep -q '^kvm'; then
+      echo "KVM: enabled."
+    else
+      if ! command -v kvm-ok >/dev/null 2>&1; then
+        sudo apt install -y cpu-checker >/dev/null 2>&1 || true
+      fi
+      if command -v kvm-ok >/dev/null 2>&1; then
+        kvm-ok || true
+      fi
+      echo "WARNING: KVM is not available. Local sandboxes need KVM; enable hardware virtualization in the BIOS/UEFI (and nested virtualization when running inside a VM), then rerun this script." >&2
+    fi
+  fi
 else
   echo "Skipping Docker Sandbox install (--skip-docker-sandbox)."
 fi
