@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-LOCAL_AI_REPO_DIR="$HOME/developer/personal/local-ai"
-DEPENDENCIES_DIR="$LOCAL_AI_REPO_DIR/dependencies"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+DEPENDENCIES_DIR="$SCRIPT_DIR/dependencies"
 
 AGENTMEMORY_VERSION="0.9.30"
 DOCKER_SANDBOX_VERSION="0.48.0"

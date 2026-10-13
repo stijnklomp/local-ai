@@ -1,2 +1,5 @@
-dependencies/*
-!dependencies/.gitkeep
+opencode-sandbox/dependencies/*
+!opencode-sandbox/dependencies/.gitkeep
+
+local-models/models/
+local-models/llama.cpp-adaptive-kv-streaming/

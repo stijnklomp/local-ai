@@ -49,7 +49,8 @@ else
   echo "sandbox: creating sandbox \"$SANDBOX_NAME\" (first run pulls the image and boots the VM, may take a few minutes)."
   exec sbx run \
     --name "$SANDBOX_NAME" \
+    --kit-arg "home=$HOME" \
     "$SCRIPT_DIR" \
     . \
-    ~/.config/opencode:ro
+    "$HOME/.config/opencode:ro"
 fi
