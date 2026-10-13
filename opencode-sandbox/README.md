@@ -57,3 +57,7 @@ Spec changes only apply when a sandbox is (re)created: remove an existing sandbo
 ### Existing sandboxes
 
 The launcher gives each project its own sandbox name based on the project directory. If a sandbox for the current project already exists, it is reused instead of creating a new one. This means running the launcher repeatedly from the same project directory will enter the existing sandbox.
+
+## Hidden agentmemory tools
+
+agentmemory advertises its full tool set regardless of which features are enabled, so tools for disabled features return HTTP 5xx errors when called. Slots (`AGENTMEMORY_SLOTS`) and knowledge-graph extraction (`GRAPH_EXTRACTION_ENABLED`) are disabled in `agentmemory.env`, so this repo denies their tools in `opencode.json`: `agentmemory_memory_slot_*`, `agentmemory_memory_graph_query` and `agentmemory_memory_relations`. OpenCode removes denied tools from the model's tool list entirely, so the agent neither sees nor calls them. The deny rules must stay after the `"*": "allow"` catch-all because the last matching rule wins. If you enable slots or graph extraction on the host, remove the matching deny line(s) and re-run `sync-config.sh`; the tools become visible again without recreating the sandbox.

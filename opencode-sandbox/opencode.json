@@ -7,7 +7,10 @@
   ],
   "model": "opencode-go/deepseek-v4-flash",
   "permission": {
-    "*": "allow"
+    "*": "allow",
+    "agentmemory_memory_slot_*": "deny",
+    "agentmemory_memory_graph_query": "deny",
+    "agentmemory_memory_relations": "deny"
   },
   "mcp": {
     "agentmemory": {
