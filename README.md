@@ -112,8 +112,24 @@ The Ollama server runs on the host and is accessed by the Docker Sandbox.
 Run from any project directory:
 
 ```sh
-sbx run ./local-ai . ~/.config/opencode:ro
+local-ai/run-opencode-in-docker-sandbox.sh
 ```
+
+### Syncing repo config to the host
+
+The sandbox reads OpenCode config, plugins and commands from the host at
+`~/.config/opencode` (mounted read-only), not from this repo. After repo
+changes, run the sync script on the host:
+
+```sh
+./sync-config.sh
+```
+
+It copies `opencode.json`, `plugins/` and `commands/` into `~/.config/opencode`,
+overwriting existing files and leaving other files in those directories alone.
+If you have customized `opencode.json`, merge your changes manually. The script
+is only ever run manually; nothing invokes it automatically. Changes apply the
+next time OpenCode starts; no sandbox rebuild is needed.
 
 ### agentmemory is optional
 
