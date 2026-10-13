@@ -15,6 +15,29 @@ function authHeaders(): Record<string, string> {
   return headers;
 }
 
+const API_PROBE_TIMEOUT_MS = 2000;
+const API_PROBE_CACHE_MS = 30000;
+let apiReachableCache: boolean | null = null;
+let apiProbedAt = 0;
+
+async function apiReachable(): Promise<boolean> {
+  const now = Date.now();
+  if (apiReachableCache !== null && now - apiProbedAt < API_PROBE_CACHE_MS) {
+    return apiReachableCache;
+  }
+  try {
+    const res = await fetch(`${API}/agentmemory/livez`, {
+      signal: AbortSignal.timeout(API_PROBE_TIMEOUT_MS),
+      headers: authHeaders(),
+    });
+    apiReachableCache = res.ok;
+  } catch {
+    apiReachableCache = false;
+  }
+  apiProbedAt = Date.now();
+  return apiReachableCache;
+}
+
 async function endStaleSessions(
   excludeSessionId: string | null,
   project: string,
@@ -193,6 +216,13 @@ memory_consolidate — Run the 4-tier memory consolidation pipeline.
 
 All memory tools start with \`agentmemory_memory_\`. Use the exact names as they appear in your tool list. Tool results are JSON. Always check what was returned before presenting to the user.
 </agentmemory-instructions>`;
+
+const AGENTMEMORY_OFFLINE_NOTICE = `<agentmemory-status>
+agentmemory is offline this session: the host memory server is unreachable.
+Do not call the agentmemory memory tools. Anything saved now would go to a
+sandbox-local scratch store that is never synced to the host. Continue
+without persistent memory.
+</agentmemory-status>`;
 
 function extractFilePaths(args: Record<string, unknown>): string[] {
   const files: string[] = [];
@@ -663,6 +693,11 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
 
       if (!contextInjectedSessions.has(sid)) {
         if (!Array.isArray(output.system)) return;
+        if (!(await apiReachable())) {
+          output.system.push(AGENTMEMORY_OFFLINE_NOTICE);
+          contextInjectedSessions.add(sid);
+          return;
+        }
         output.system.push(AGENTMEMORY_INSTRUCTIONS);
         // prefer the context already fetched at session.created;
         // fall back to a fresh /context call if the cache missed (e.g.
@@ -685,6 +720,7 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
 
       const stash = stashFor(sid);
       if (stash.size === 0) return;
+      if (!(await apiReachable())) return;
       const files = [...stash].slice(0, 10);
 
       const enrichResult = await postJson("/enrich", {

@@ -12,6 +12,7 @@ extends: opencode
 environment:
   variables:
     OPENCODE_CONFIG: /home/stijn/.config/opencode/opencode.json
+    AGENTMEMORY_URL: http://host.docker.internal:3111
 
 permissions:
   network:
@@ -23,7 +24,7 @@ permissions:
 
 setup:
   install:
-    - command: "command -v agentmemory || npm install -g @agentmemory/agentmemory@0.9.28 --no-fund --no-audit"
+    - command: "command -v agentmemory || npm install -g @agentmemory/agentmemory@0.9.29 --no-fund --no-audit"
       description: Install the pinned agentmemory MCP client
     - command: "mkdir -p /home/agent/.config/opencode && ln -sfn /home/stijn/.config/opencode/skills /home/agent/.config/opencode/skills && ln -sfn /home/stijn/.config/opencode/commands /home/agent/.config/opencode/commands && ln -sfn /home/stijn/.config/opencode/plugins /home/agent/.config/opencode/plugins"
       description: Symlink skills, commands and plugins from the read-only host mount
@@ -36,8 +37,11 @@ agentInstructions:
       the host at `/home/stijn/.config/opencode`. Edit them on the host; changes
       apply without rebuilding this sandbox.
     - The `agentmemory` MCP connects directly to the host agentmemory server at
-      `http://host.docker.internal:3111` (see the host opencode.json
-      `AGENTMEMORY_URL`). Make sure the host server is running before launching
-      the sandbox.
+      `http://host.docker.internal:3111` (see `AGENTMEMORY_URL`). This is
+      optional: if the host server is not running, the MCP automatically
+      switches to a reduced sandbox-local toolset (explicit saves only, kept
+      inside the sandbox and never synced to the host) and automatic capture
+      pauses. The full toolset and capture resume automatically once the host
+      server is reachable again.
     - Docker is available inside the sandbox; prefer it for running code.
       `sudo` is passwordless for the `agent` user.

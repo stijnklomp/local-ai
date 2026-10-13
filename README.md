@@ -115,6 +115,12 @@ Run from any project directory:
 sbx run ./local-ai . ~/.config/opencode:ro
 ```
 
+### agentmemory is optional
+
+agentmemory does not have to be running to use the sandbox. If the host health check fails, the launcher prints a note and starts anyway. Inside the sandbox the agentmemory MCP then falls back to a reduced sandbox-local toolset (explicit saves only, kept inside the sandbox and never synced to the host) and automatic session capture pauses. The full toolset and capture resume automatically once the host server is reachable again.
+
+Spec changes only apply when a sandbox is (re)created: remove an existing sandbox with `sbx rm <name>` before relaunching to pick them up.
+
 ### Existing sandboxes
 
 The launcher gives each project its own sandbox name based on the project directory. If a sandbox for the current project already exists, it is reused instead of creating a new one. This means running the launcher repeatedly from the same project directory will enter the existing sandbox.
