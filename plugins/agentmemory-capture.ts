@@ -16,7 +16,7 @@ function authHeaders(): Record<string, string> {
 }
 
 const API_PROBE_TIMEOUT_MS = 2000;
-const API_PROBE_CACHE_MS = 30000;
+const API_PROBE_CACHE_MS = 10000;
 let apiReachableCache: boolean | null = null;
 let apiProbedAt = 0;
 
@@ -140,6 +140,7 @@ const stashedFiles = new Map<string, Set<string>>();
 const seenSubtaskIds = new Map<string, Set<string>>();
 const seenToolCallIds = new Map<string, Set<string>>();
 const contextInjectedSessions = new Set<string>();
+const offlineNotifiedSessions = new Set<string>();
 // cache the context returned by POST /session/start so the chat
 // system-transform hook can inject it without a second /context fetch.
 // Auto-injection now happens at session.created (immediately) AND at
@@ -222,6 +223,10 @@ agentmemory is offline this session: the host memory server is unreachable.
 Do not call the agentmemory memory tools. Anything saved now would go to a
 sandbox-local scratch store that is never synced to the host. Continue
 without persistent memory.
+</agentmemory-status>`;
+
+const AGENTMEMORY_BACK_ONLINE_NOTICE = `<agentmemory-status>
+agentmemory is reachable again: persistent memory and session capture are active.
 </agentmemory-status>`;
 
 function extractFilePaths(args: Record<string, unknown>): string[] {
@@ -366,6 +371,7 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
         seenSubtaskIds.delete(sid);
         seenToolCallIds.delete(sid);
         contextInjectedSessions.delete(sid);
+        offlineNotifiedSessions.delete(sid);
       }
 
       // ── session.error ──
@@ -690,14 +696,20 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
     "experimental.chat.system.transform": async (input, output) => {
       const sid = input.sessionID || activeSessionId;
       if (!sid) return;
+      if (!Array.isArray(output.system)) return;
+
+      if (!(await apiReachable())) {
+        if (!offlineNotifiedSessions.has(sid)) {
+          output.system.push(AGENTMEMORY_OFFLINE_NOTICE);
+          offlineNotifiedSessions.add(sid);
+        }
+        return;
+      }
+      if (offlineNotifiedSessions.delete(sid) && contextInjectedSessions.has(sid)) {
+        output.system.push(AGENTMEMORY_BACK_ONLINE_NOTICE);
+      }
 
       if (!contextInjectedSessions.has(sid)) {
-        if (!Array.isArray(output.system)) return;
-        if (!(await apiReachable())) {
-          output.system.push(AGENTMEMORY_OFFLINE_NOTICE);
-          contextInjectedSessions.add(sid);
-          return;
-        }
         output.system.push(AGENTMEMORY_INSTRUCTIONS);
         // prefer the context already fetched at session.created;
         // fall back to a fresh /context call if the cache missed (e.g.
@@ -720,7 +732,6 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
 
       const stash = stashFor(sid);
       if (stash.size === 0) return;
-      if (!(await apiReachable())) return;
       const files = [...stash].slice(0, 10);
 
       const enrichResult = await postJson("/enrich", {
@@ -810,6 +821,7 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
       seenToolCallIds.clear();
       startContextCache.clear();
       contextInjectedSessions.clear();
+      offlineNotifiedSessions.clear();
     },
   };
 };

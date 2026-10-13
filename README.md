@@ -119,6 +119,10 @@ sbx run ./local-ai . ~/.config/opencode:ro
 
 agentmemory does not have to be running to use the sandbox. If the host health check fails, the launcher prints a note and starts anyway. Inside the sandbox the agentmemory MCP then falls back to a reduced sandbox-local toolset (explicit saves only, kept inside the sandbox and never synced to the host) and automatic session capture pauses. The full toolset and capture resume automatically once the host server is reachable again.
 
+### agentmemory API secret note (no-op)
+
+agentmemory v0.9.30 authenticates its REST API. On every launch, the launcher resolves the host secret (`AGENTMEMORY_SECRET` from the environment, else from `~/.agentmemory/.env`, else from `~/.agentmemory/secret`) and writes it to `~/.config/opencode/agentmemory-secret` (mode 0600, inside the read-only mount). The sandbox exports it as `AGENTMEMORY_SECRET` at startup so the MCP client and the capture plugin can authenticate. If you rotate the secret, re-run the launcher and restart the sandbox.
+
 Spec changes only apply when a sandbox is (re)created: remove an existing sandbox with `sbx rm <name>` before relaunching to pick them up.
 
 ### Existing sandboxes

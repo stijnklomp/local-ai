@@ -4,7 +4,7 @@ set -euo pipefail
 LOCAL_AI_REPO_DIR="$HOME/developer/personal/local-ai"
 DEPENDENCIES_DIR="$LOCAL_AI_REPO_DIR/dependencies"
 
-AGENTMEMORY_VERSION="0.9.29"
+AGENTMEMORY_VERSION="0.9.30"
 
 SKIP_DOCKER_SANDBOX=false
 SKIP_AGENTMEMORY=false

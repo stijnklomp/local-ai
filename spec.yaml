@@ -24,10 +24,15 @@ permissions:
 
 setup:
   install:
-    - command: "command -v agentmemory || npm install -g @agentmemory/agentmemory@0.9.29 --no-fund --no-audit"
+    - command: "command -v agentmemory || npm install -g @agentmemory/agentmemory@0.9.30 --no-fund --no-audit"
       description: Install the pinned agentmemory MCP client
     - command: "mkdir -p /home/agent/.config/opencode && ln -sfn /home/stijn/.config/opencode/skills /home/agent/.config/opencode/skills && ln -sfn /home/stijn/.config/opencode/commands /home/agent/.config/opencode/commands && ln -sfn /home/stijn/.config/opencode/plugins /home/agent/.config/opencode/plugins"
       description: Symlink skills, commands and plugins from the read-only host mount
+    - command: |
+        if ! grep -q AGENTMEMORY_SECRET /etc/sandbox-persistent.sh 2>/dev/null; then
+          printf '%s\n' 'if [ -r /home/stijn/.config/opencode/agentmemory-secret ]; then AGENTMEMORY_SECRET=$(cat /home/stijn/.config/opencode/agentmemory-secret); export AGENTMEMORY_SECRET; fi' >> /etc/sandbox-persistent.sh
+        fi
+      description: Export the agentmemory API secret into the sandbox environment
 
 agentInstructions:
   content: |
