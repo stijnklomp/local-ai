@@ -15,29 +15,6 @@ function authHeaders(): Record<string, string> {
   return headers;
 }
 
-const API_PROBE_TIMEOUT_MS = 2000;
-const API_PROBE_CACHE_MS = 10000;
-let apiReachableCache: boolean | null = null;
-let apiProbedAt = 0;
-
-async function apiReachable(): Promise<boolean> {
-  const now = Date.now();
-  if (apiReachableCache !== null && now - apiProbedAt < API_PROBE_CACHE_MS) {
-    return apiReachableCache;
-  }
-  try {
-    const res = await fetch(`${API}/agentmemory/livez`, {
-      signal: AbortSignal.timeout(API_PROBE_TIMEOUT_MS),
-      headers: authHeaders(),
-    });
-    apiReachableCache = res.ok;
-  } catch {
-    apiReachableCache = false;
-  }
-  apiProbedAt = Date.now();
-  return apiReachableCache;
-}
-
 async function endStaleSessions(
   excludeSessionId: string | null,
   project: string,
@@ -139,14 +116,6 @@ let projectPath: string | null = null;
 const stashedFiles = new Map<string, Set<string>>();
 const seenSubtaskIds = new Map<string, Set<string>>();
 const seenToolCallIds = new Map<string, Set<string>>();
-const contextInjectedSessions = new Set<string>();
-const offlineNotifiedSessions = new Set<string>();
-// cache the context returned by POST /session/start so the chat
-// system-transform hook can inject it without a second /context fetch.
-// Auto-injection now happens at session.created (immediately) AND at
-// the first prompt_submit (fallback for older OpenCode builds that
-// don't implement experimental.chat.system.transform).
-const startContextCache = new Map<string, string>();
 
 function stashFor(sid: string): Set<string> {
   let s = stashedFiles.get(sid);
@@ -177,57 +146,6 @@ function safeSlice(v: unknown, max: number): string {
   if (v == null) return "";
   try { return JSON.stringify(v).slice(0, max); } catch { return ""; }
 }
-
-const AGENTMEMORY_INSTRUCTIONS = `<agentmemory-instructions>
-You have access to agentmemory for persistent cross-session memory. Use these tools proactively.
-
-CORE TOOLS:
-
-memory_save — Save an insight, decision, or fact to long-term memory.
-  Required: content (text), concepts (2-5 comma-separated keywords), type (pattern/preference/architecture/bug/workflow/fact)
-  Optional: files (comma-separated paths)
-  Use when: user says "remember this", after discovering a bug, after making an architectural decision, after learning a project convention.
-
-memory_recall — Search past observations by keywords.
-  Use when: user says "recall", "what did we do", "do you remember", or needs context from past sessions.
-
-memory_smart_search — Hybrid semantic+keyword search with progressive disclosure.
-  Use when: you need the most relevant past context, fuzzy/conceptual searches, or recall doesn't find what you need.
-
-memory_sessions — List recent sessions with status and observation counts.
-  Use when: user asks about session/past history, "what did we work on".
-
-memory_file_history — Get past observations about specific files (across all sessions).
-  Use when: you're about to edit a file and want to know its history, common pitfalls, or past edits.
-
-memory_lesson_save — Save a lesson learned (what worked, what to avoid).
-  Use when: you discover a pattern that could help future sessions avoid mistakes.
-
-memory_lesson_recall — Search lessons by query. Returns lessons sorted by confidence.
-  Use when: before making a decision, check if past lessons apply.
-
-memory_governance_delete — Delete specific memories. Requires explicit user confirmation.
-  Use when: user says "forget this", "delete that memory".
-
-memory_patterns — Detect recurring patterns across sessions.
-  Use when: you want to understand project-level trends over time.
-
-memory_consolidate — Run the 4-tier memory consolidation pipeline.
-  Use when: you want to compress and organize accumulated session observations.
-
-All memory tools start with \`agentmemory_memory_\`. Use the exact names as they appear in your tool list. Tool results are JSON. Always check what was returned before presenting to the user.
-</agentmemory-instructions>`;
-
-const AGENTMEMORY_OFFLINE_NOTICE = `<agentmemory-status>
-agentmemory is offline this session: the host memory server is unreachable.
-Do not call the agentmemory memory tools. Anything saved now would go to a
-sandbox-local scratch store that is never synced to the host. Continue
-without persistent memory.
-</agentmemory-status>`;
-
-const AGENTMEMORY_BACK_ONLINE_NOTICE = `<agentmemory-status>
-agentmemory is reachable again: persistent memory and session capture are active.
-</agentmemory-status>`;
 
 function extractFilePaths(args: Record<string, unknown>): string[] {
   const files: string[] = [];
@@ -271,7 +189,6 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
         stashedFiles.set(activeSessionId, new Set());
         seenSubtaskIds.delete(activeSessionId);
         seenToolCallIds.delete(activeSessionId);
-        contextInjectedSessions.delete(activeSessionId);
         // End any stale active sessions for this project before starting
         // a new one.  This prevents sessions from accumulating when the
         // sandbox is reused but OpenCode starts a fresh process each time
@@ -280,9 +197,9 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
 
         // Snapshot the session id locally — `activeSessionId` is mutable
         // and another `session.created` event during the await could
-        // rebind it, causing context to be cached against the wrong key.
+        // rebind it.
         const sessionId = activeSessionId;
-        const startResult = await postJson("/session/start", {
+        await post("/session/start", {
           sessionId,
           title: info?.title ?? null,
           parentID: info?.parentID ?? null,
@@ -290,12 +207,6 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
           project: projectPath,
           cwd: projectPath,
         });
-        // cache the context returned at session/start so the
-        // chat.system.transform hook injects it without a second fetch.
-        const startCtx = (startResult as any)?.context;
-        if (typeof startCtx === "string" && startCtx.length > 0) {
-          startContextCache.set(sessionId, startCtx);
-        }
         if (pendingConfig) {
           await observe(sessionId, "config_loaded", pendingConfig);
           pendingConfig = null;
@@ -367,11 +278,8 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
         post("/consolidate-pipeline", { tier: "all", force: true }, 30000);
         if (sid === activeSessionId) activeSessionId = null;
         stashedFiles.delete(sid);
-        startContextCache.delete(sid);
         seenSubtaskIds.delete(sid);
         seenToolCallIds.delete(sid);
-        contextInjectedSessions.delete(sid);
-        offlineNotifiedSessions.delete(sid);
       }
 
       // ── session.error ──
@@ -693,42 +601,14 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
     },
 
     // ── experimental.chat.system.transform ──
+    // Only injects file enrichment for stashed files. Memory instructions and
+    // session context are deliberately not injected: this hook fires for every
+    // LLM request (including the internal title request, whose output is
+    // discarded), which made one-shot injections unreliable.
     "experimental.chat.system.transform": async (input, output) => {
       const sid = input.sessionID || activeSessionId;
       if (!sid) return;
       if (!Array.isArray(output.system)) return;
-
-      if (!(await apiReachable())) {
-        if (!offlineNotifiedSessions.has(sid)) {
-          output.system.push(AGENTMEMORY_OFFLINE_NOTICE);
-          offlineNotifiedSessions.add(sid);
-        }
-        return;
-      }
-      if (offlineNotifiedSessions.delete(sid) && contextInjectedSessions.has(sid)) {
-        output.system.push(AGENTMEMORY_BACK_ONLINE_NOTICE);
-      }
-
-      if (!contextInjectedSessions.has(sid)) {
-        output.system.push(AGENTMEMORY_INSTRUCTIONS);
-        // prefer the context already fetched at session.created;
-        // fall back to a fresh /context call if the cache missed (e.g.
-        // session resumed across plugin reloads).
-        let ctx = startContextCache.get(sid);
-        if (typeof ctx !== "string" || ctx.length === 0) {
-          const result = await postJson("/context", {
-            sessionId: sid,
-            project: projectPath,
-          });
-          ctx = (result as any)?.context;
-        } else {
-          startContextCache.delete(sid);
-        }
-        if (typeof ctx === "string" && ctx.length > 0) {
-          output.system.push(ctx);
-        }
-        contextInjectedSessions.add(sid);
-      }
 
       const stash = stashFor(sid);
       if (stash.size === 0) return;
@@ -742,9 +622,7 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
 
       const enrichCtx = (enrichResult as any)?.context;
       if (typeof enrichCtx === "string" && enrichCtx.length > 0) {
-        if (Array.isArray(output.system)) {
-          output.system.push(enrichCtx);
-        }
+        output.system.push(enrichCtx);
         for (const f of files) stash.delete(f);
       }
     },
@@ -819,9 +697,6 @@ export const AgentmemoryCapturePlugin: Plugin = async (ctx) => {
       stashedFiles.clear();
       seenSubtaskIds.clear();
       seenToolCallIds.clear();
-      startContextCache.clear();
-      contextInjectedSessions.clear();
-      offlineNotifiedSessions.clear();
     },
   };
 };

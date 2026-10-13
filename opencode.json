@@ -2,7 +2,8 @@
   "$schema": "https://opencode.ai/config.json",
   "instructions": [
     "~/.config/opencode/skills/docker-runtime/SKILL.md",
-    "CRITICAL: When calling agentmemory MCP tools, always provide 'concepts' and 'files' as explicit structured arrays, never as flat strings or comma-separated text."
+    "CRITICAL: When calling agentmemory MCP tools, always provide 'concepts' and 'files' as explicit structured arrays, never as flat strings or comma-separated text.",
+    "agentmemory runs on the host and is not guaranteed to be available: if it is offline, the MCP tools fall back to a sandbox-local store that never syncs to the host, so memory persistence is not guaranteed. This is by design; still use the tools normally."
   ],
   "model": "opencode-go/deepseek-v4-flash",
   "permission": {
