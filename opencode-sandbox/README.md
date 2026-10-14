@@ -46,6 +46,7 @@ local-ai/opencode-sandbox/scripts/run-opencode-in-docker-sandbox.sh
 - It resolves the agentmemory secret, writes `~/.config/opencode/agentmemory-secret` (mode 0600), and health-checks the host agentmemory server on `:3111`. A missing or unreachable agentmemory only prints a note; the sandbox still starts.
 - The first run pulls the image, boots the VM and runs the kit setup (installs OpenCode 2.0.29 and agentmemory 0.9.30), which takes minutes. Later runs attach to the existing sandbox with the same name.
 - The launcher passes `--kit-arg home="$HOME"` when it creates a sandbox, so the kit config adapts to the host user. Always use the launcher instead of calling `sbx run` on the kit directory directly.
+- The launcher starts OpenCode with `--auto` (`sbx run ... -- --auto`), so the sandboxed agent auto-approves every permission that is not explicitly denied and works without confirmation prompts. `deny` rules in `opencode.json` still apply; the sandbox itself is the safety boundary that makes unattended execution safe.
 
 ### Syncing repo config to the host
 
@@ -64,6 +65,7 @@ It copies `opencode.json`, `global-AGENTS.md` (as `AGENTS.md`), `plugins/` and `
 - OpenCode 2 ignores the `instructions` config field. Global instructions live in `global-AGENTS.md`, which syncs to `~/.config/opencode/AGENTS.md` (OpenCode 2 discovers that file globally). The kit symlinks it into the sandbox home config directory.
 - OpenCode 1 plugin implementations do not run in OpenCode 2. `plugins/agentmemory-capture.ts` is written against the OpenCode 2 plugin API (`@opencode/plugin` 2.0.29) and is loaded from the global `~/.config/opencode/plugins/` directory.
 - The agentmemory MCP server sets `codemode: false` so its tools stay on the model's native tool list as `agentmemory_memory_*`; `/recall` and `/remember` and the tool deny rules depend on those names.
+- `websearch.provider` is pinned to `"random"`, so the first search in a fresh sandbox does not stop to ask which search provider to use. `random` selects any provider with credentials and retries with another on rate limits. Set it to a provider ID (`exa`, `firecrawl`, `parallel`, `tavily`, `tinyfish`) to pin one, or remove the key to get the selection prompt back; the provider domains must be reachable through the sbx network policy.
 - Project-local skills can be added with the `skills` config field; see `examples/opencode_project_skills_path_example.json`.
 - Capture mapping changed with the v2 event stream: sessions start/end from `session.created`/`session.deleted`, idle summarization from `session.status`/`session.idle`, compaction from `session.compaction.*`, assistant steps from `session.step.ended`, reasoning from `session.reasoning.ended`, permission prompts from `permission.asked`/`permission.replied`, and file changes from `filesystem.changed`. Tool calls, prompts, model params and compaction enrichment are captured through plugin hooks (`prompt`, `context`, `compaction`, `tool.execute.before`/`after`). The v1-only `command.executed` observation has no v2 equivalent; todo updates are captured as `todowrite` tool calls.
 
@@ -100,3 +102,5 @@ agentmemory advertises its full tool set regardless of which features are enable
 | Config edits don't show up in the sandbox | Run `./scripts/sync-config.sh` and restart OpenCode. For `spec.yaml` or `agentmemory.env` changes, recreate the sandbox: `sbx rm <name>`, then relaunch. |
 | agentmemory tools missing or reduced | The host server is unreachable; start it or keep working, explicit saves stay sandbox-local (see [agentmemory is optional](#agentmemory-is-optional)). |
 | `spec.yaml` sanity check | `sbx kit validate --kit-arg "home=$HOME" .` from this directory. |
+| Agent asks for approval before a command or edit | Launch via the launcher, which passes `--auto`; direct `sbx run`/dashboard attaches skip the flag. Anything hit by an explicit `deny` in `opencode.json` is blocked rather than prompted. |
+| First search asks which provider to use | `./scripts/sync-config.sh` (the config pins `websearch.provider: "random"`) and restart OpenCode. |

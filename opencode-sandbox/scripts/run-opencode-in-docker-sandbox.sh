@@ -69,9 +69,13 @@ fi
 
 echo "sandbox: checking for existing sandbox \"$SANDBOX_NAME\"..."
 
+# OpenCode runs with --auto: permissions that are not explicitly denied are
+# approved without prompting. Only explicit deny rules still block (the
+# disabled agentmemory tools and the provider allowlist); the sandbox itself is
+# the safety boundary, so unattended execution is intended.
 if sbx ls -q | grep -Fxq "$SANDBOX_NAME"; then
   echo "sandbox: attaching to existing sandbox \"$SANDBOX_NAME\"."
-  exec sbx run --name "$SANDBOX_NAME"
+  exec sbx run --name "$SANDBOX_NAME" -- --auto
 else
   echo "sandbox: creating sandbox \"$SANDBOX_NAME\" (first run pulls the image and boots the VM, may take a few minutes)."
   exec sbx run \
@@ -79,5 +83,6 @@ else
     --kit-arg "home=$HOME" \
     "$REPO_DIR" \
     . \
-    "$HOME/.config/opencode:ro"
+    "$HOME/.config/opencode:ro" \
+    -- --auto
 fi

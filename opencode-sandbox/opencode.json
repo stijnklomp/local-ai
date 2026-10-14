@@ -15,6 +15,9 @@
     { "action": "agentmemory_memory_graph_query", "resource": "*", "effect": "deny" },
     { "action": "agentmemory_memory_relations", "resource": "*", "effect": "deny" }
   ],
+  "websearch": {
+    "provider": "random"
+  },
   "mcp": {
     "servers": {
       "agentmemory": {

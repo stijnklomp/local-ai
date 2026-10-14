@@ -13,18 +13,18 @@ Runs OpenCode 2 inside Docker Sandboxes (`sbx`, schema v2 kit) with the agentmem
 |------|---------|-------|
 | Install host deps | `./scripts/install-dependencies.sh` | sbx 0.48.0 (amd64/arm64 deb, pinned SHA-256) + agentmemory 0.9.30 (needs Node >= 20 and a writable npm prefix); flags `--skip-docker-sandbox`, `--skip-agentmemory`; needs KVM + `sbx login`; the sandbox setup installs OpenCode 2.0.29 (`@opencode/cli`) |
 | Sync repo config to host | `./scripts/sync-config.sh` | host only, never inside the sandbox; copies opencode.json, global-AGENTS.md (as AGENTS.md), plugins/, commands/ into ~/.config/opencode; validates JSON, keeps a single `*.bak` per file, overwritten every run |
-| Enter sandbox | `./scripts/run-opencode-in-docker-sandbox.sh` | run from any project dir; requires sbx and ~/.config/opencode; sandbox name = sanitized basename of $PWD (lowercase, hyphens, 63 chars), reused if it exists |
+| Enter sandbox | `./scripts/run-opencode-in-docker-sandbox.sh` | run from any project dir; requires sbx and ~/.config/opencode; sandbox name = sanitized basename of $PWD (lowercase, hyphens, 63 chars), reused if it exists; starts OpenCode with `--auto` |
 | Reset sandbox | `sbx rm <name>` then relaunch | required after spec.yaml or agentmemory.env changes, including the OpenCode 2 upgrade |
 
 ## File Map
 | Path | Purpose |
 |------|---------|
 | spec.yaml | kit: `extends: opencode`, required `home` arg, network allowlist, installs OpenCode 2 CLI, symlinks global AGENTS.md, secret export |
-| opencode.json | native OpenCode 2 config: providers (ollama/llama-server on 172.17.0.1), mcp.servers, permissions, provider policies, update disable |
+| opencode.json | native OpenCode 2 config: providers (ollama/llama-server on 172.17.0.1), mcp.servers, permissions, a pinned `websearch.provider` (`"random"`), provider policies, update disable |
 | global-AGENTS.md | global instructions; synced to ~/.config/opencode/AGENTS.md (OpenCode 2 ignores the `instructions` config field) |
 | agentmemory.env | host agentmemory config (OPENAI_MODEL); copy to ~/.agentmemory/.env |
 | scripts/install-dependencies.sh | host setup: sha256-verified sbx deb, KVM checks, Node/npm guards, agentmemory install |
-| scripts/run-opencode-in-docker-sandbox.sh | launcher: preflight checks (sbx, config dir), sanitizes sandbox name, resolves AGENTMEMORY_SECRET, writes ~/.config/opencode/agentmemory-secret (0600), health-checks :3111 |
+| scripts/run-opencode-in-docker-sandbox.sh | launcher: preflight checks (sbx, config dir), sanitizes sandbox name, resolves AGENTMEMORY_SECRET, writes ~/.config/opencode/agentmemory-secret (0600), health-checks :3111, starts OpenCode with `--auto` (no approval prompts) |
 | scripts/sync-config.sh | repo to ~/.config/opencode; aborts when plugins/ or commands/ are symlinks (that is the sandbox view) |
 | commands/recall.md, commands/remember.md | /recall and /remember slash commands over agentmemory tools |
 | plugins/agentmemory-capture.ts | OpenCode 2 plugin (`@opencode/plugin`): subscribes to events and registers prompt/context/compaction/tool hooks; cleanup posts synchronously via curl |
@@ -34,6 +34,7 @@ Runs OpenCode 2 inside Docker Sandboxes (`sbx`, schema v2 kit) with the agentmem
 | When | Do |
 |------|-----|
 | Changing opencode.json, global-AGENTS.md, plugins/, commands/ | run `./scripts/sync-config.sh`, restart OpenCode; no sandbox rebuild needed |
+| Wanting zero approval prompts | use the launcher: it passes `--auto` and opencode.json allows every action except the explicit agentmemory denies; `sbx run`/dashboard attaches skip the flag |
 | Changing spec.yaml or agentmemory.env | recreate the sandbox (`sbx rm <name>`), then relaunch; after spec edits run `sbx kit validate --kit-arg "home=$HOME" .`; allow entries are additive to the user's preset and pinned versions must match the install script |
 | Sandbox cannot reach host model servers at 172.17.0.1 | sbx proxies all TCP; non-Open network presets may deny the bridge gateway (allow it scoped, or use host.docker.internal baseURLs; see README troubleshooting) |
 | Porting or editing the capture plugin | OpenCode 1 plugins do not run in v2; use the `@opencode/plugin` 2.0.29 API. Local plugin files resolve the package from the loader, no node_modules needed |
