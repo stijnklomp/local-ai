@@ -147,7 +147,7 @@ Check from inside the sandbox that the API is reachable:
 curl http://172.17.0.1:8080/v1/models
 ```
 
-The web UI is at `http://172.17.0.1:8080/` (and on the host at `http://localhost:8080/`). Any OpenAI-compatible client can point at `http://172.17.0.1:8080/v1`. To use it in OpenCode itself, add a provider to `opencode-sandbox/opencode.json` mirroring the existing `ollama` block with `baseURL: http://172.17.0.1:8080/v1`, then run `opencode-sandbox/sync-config.sh` on the host.
+The web UI is at `http://172.17.0.1:8080/` (and on the host at `http://localhost:8080/`). Any OpenAI-compatible client can point at `http://172.17.0.1:8080/v1`. To use it in OpenCode itself, add a provider to `opencode-sandbox/opencode.json` mirroring the existing `ollama` block with `baseURL: http://172.17.0.1:8080/v1`, then run `opencode-sandbox/scripts/sync-config.sh` on the host.
 
 ## Troubleshooting
 

@@ -2,7 +2,34 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SANDBOX_NAME="$(basename "$PWD")"
+REPO_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+
+if ! command -v sbx >/dev/null 2>&1; then
+  echo "Error: 'sbx' (Docker Sandboxes) is not installed or not on PATH." >&2
+  echo "Install the dependencies first: $REPO_DIR/scripts/install-dependencies.sh" >&2
+  exit 1
+fi
+
+if [ ! -d "$HOME/.config/opencode" ]; then
+  echo "Error: $HOME/.config/opencode does not exist." >&2
+  echo "Generate it first: $REPO_DIR/scripts/sync-config.sh" >&2
+  exit 1
+fi
+
+# Sandbox names follow the kit name rules: lowercase alphanumerics and hyphens,
+# 1-64 characters. Derive a valid name from the project directory name.
+RAW_NAME="$(basename "$PWD")"
+SANDBOX_NAME="$(printf '%s' "$RAW_NAME" \
+  | tr '[:upper:]' '[:lower:]' \
+  | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
+  | cut -c1-63 \
+  | sed -E 's/-+$//')"
+if [ -z "$SANDBOX_NAME" ]; then
+  SANDBOX_NAME="sandbox"
+fi
+if [ "$SANDBOX_NAME" != "$RAW_NAME" ]; then
+  echo "sandbox: sanitized project name \"$RAW_NAME\" to \"$SANDBOX_NAME\"."
+fi
 
 SECRET="${AGENTMEMORY_SECRET:-}"
 if [ -z "$SECRET" ] && [ -f "$HOME/.agentmemory/.env" ]; then
@@ -50,7 +77,7 @@ else
   exec sbx run \
     --name "$SANDBOX_NAME" \
     --kit-arg "home=$HOME" \
-    "$SCRIPT_DIR" \
+    "$REPO_DIR" \
     . \
     "$HOME/.config/opencode:ro"
 fi

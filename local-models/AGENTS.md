@@ -37,7 +37,7 @@ Docs: [README.md](README.md) (Ollama/firewall), [llama-cpp-adaptive-kv-streaming
 | Native attention or libcudart link errors | rebuild via the install script; never enlarge the arena |
 | After updating the fork | rerun the install script (pull --ff-only, then rebuild) |
 | Exposing a server to the sandbox | listen on 0.0.0.0; UFW allow from 172.17.0.0/16 (README firewall section) |
-| Adding the model in OpenCode | mirror the ollama provider block in ../opencode-sandbox/opencode.json, then run sync-config.sh |
+| Adding the model in OpenCode | mirror the ollama provider block in ../opencode-sandbox/opencode.json, then run ../opencode-sandbox/scripts/sync-config.sh |
 
 ## Boundaries
 - Never commit `models/` or `llama.cpp-adaptive-kv-streaming/` (both gitignored).
