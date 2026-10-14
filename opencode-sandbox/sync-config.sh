@@ -13,6 +13,7 @@ fi
 mkdir -p "$CONFIG_DIR/plugins" "$CONFIG_DIR/commands"
 
 cp -f "$SCRIPT_DIR/opencode.json" "$CONFIG_DIR/opencode.json"
+cp -f "$SCRIPT_DIR/global-AGENTS.md" "$CONFIG_DIR/AGENTS.md"
 
 PLUGIN_COUNT=0
 for f in "$SCRIPT_DIR"/plugins/*; do
@@ -28,5 +29,5 @@ for f in "$SCRIPT_DIR"/commands/*; do
   COMMAND_COUNT=$((COMMAND_COUNT + 1))
 done
 
-echo "Synced to ${CONFIG_DIR}: opencode.json, ${PLUGIN_COUNT} plugin file(s), ${COMMAND_COUNT} command file(s)."
+echo "Synced to ${CONFIG_DIR}: opencode.json, AGENTS.md, ${PLUGIN_COUNT} plugin file(s), ${COMMAND_COUNT} command file(s)."
 echo "Existing files were overwritten. If you customized opencode.json, merge your changes manually."

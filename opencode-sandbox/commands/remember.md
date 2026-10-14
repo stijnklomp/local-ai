@@ -13,7 +13,7 @@ Explicitly save an insight, decision, or learning to agentmemory for future sess
 3. Extract relevant file paths the memory references.
 4. Call `memory_save` with:
    - `content` — full text to remember (preserve user's phrasing)
-   - `concepts` — extracted concept list
-   - `files` — extracted file list (empty array if none)
+   - `concepts` — comma-separated string of the extracted concepts
+   - `files` — comma-separated string of the extracted file paths (empty string if none)
    - `type` — choose from: pattern, preference, architecture, bug, workflow, fact
 5. Confirm the save and show the concepts tagged so the user knows retrieval terms.

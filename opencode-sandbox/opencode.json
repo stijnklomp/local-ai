@@ -1,32 +1,37 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "instructions": [
-    "~/.config/opencode/skills/docker-runtime/SKILL.md",
-    "CRITICAL: When calling agentmemory MCP tools, always provide 'concepts' and 'files' as explicit structured arrays, never as flat strings or comma-separated text.",
-    "agentmemory runs on the host and is not guaranteed to be available: if it is offline, the MCP tools fall back to a sandbox-local store that never syncs to the host, so memory persistence is not guaranteed. This is by design; still use the tools normally."
-  ],
   "model": "opencode-go/deepseek-v4.1-flash",
-  "permission": {
-    "*": "allow",
-    "agentmemory_memory_slot_*": "deny",
-    "agentmemory_memory_graph_query": "deny",
-    "agentmemory_memory_relations": "deny"
-  },
+  "policies": [
+    { "action": "provider.use", "resource": "*", "effect": "deny" },
+    { "action": "provider.use", "resource": "ollama", "effect": "allow" },
+    { "action": "provider.use", "resource": "llama-server", "effect": "allow" },
+    { "action": "provider.use", "resource": "opencode", "effect": "allow" },
+    { "action": "provider.use", "resource": "opencode-go", "effect": "allow" },
+    { "action": "provider.use", "resource": "openrouter", "effect": "allow" }
+  ],
+  "permissions": [
+    { "action": "*", "resource": "*", "effect": "allow" },
+    { "action": "agentmemory_memory_slot_*", "resource": "*", "effect": "deny" },
+    { "action": "agentmemory_memory_graph_query", "resource": "*", "effect": "deny" },
+    { "action": "agentmemory_memory_relations", "resource": "*", "effect": "deny" }
+  ],
   "mcp": {
-    "agentmemory": {
-      "type": "local",
-      "command": ["agentmemory", "mcp"],
-      "environment": {
-        "AGENTMEMORY_URL": "http://host.docker.internal:3111"
-      },
-      "enabled": true
+    "servers": {
+      "agentmemory": {
+        "type": "local",
+        "command": ["agentmemory", "mcp"],
+        "environment": {
+          "AGENTMEMORY_URL": "http://host.docker.internal:3111"
+        },
+        "codemode": false
+      }
     }
   },
-  "provider": {
+  "providers": {
     "opencode-go": {
       "models": {
         "deepseek-v4.1-flash": {
-          "options": {
+          "settings": {
             "reasoningEffort": "max"
           }
         }
@@ -40,9 +45,7 @@
       }
     },
     "ollama": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama (local)",
-      "options": {
+      "settings": {
         "baseURL": "http://172.17.0.1:11434/v1"
       },
       "models": {
@@ -52,26 +55,23 @@
       }
     },
     "llama-server": {
-      "npm": "@ai-sdk/openai-compatible",
       "name": "llama.cpp (local, RTX 5080)",
-      "options": {
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
         "baseURL": "http://172.17.0.1:8080/v1"
       },
       "models": {
         "Qwen3.8-27B-UD-IQ4_XS.gguf": {
-          "name": "Qwen 3.8 (27B) IQ4_XS, 256K ctx, MTP"
+          "name": "Qwen 3.8 (27B) IQ4_XS, 256K ctx, MTP",
+          "limit": {
+            "context": 262144,
+            "output": 32768
+          }
         }
       }
     }
   },
-  "enabled_providers": [
-    "ollama",
-    "llama-server",
-    "opencode",
-    "opencode-go",
-    "openrouter"
-  ],
-  "autoupdate": false,
+  "update": "disable",
   "watcher": {
     "ignore": ["node_modules/**", "dist/**"]
   }
