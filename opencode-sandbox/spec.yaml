@@ -24,6 +24,14 @@ permissions:
       - registry.npmjs.org
       - "*.npmjs.org"
       - opencode.ai:443
+      # Built-in websearch provider endpoints. `websearch.provider: "random"`
+      # retries with another provider on rate limits, so every provider must
+      # be reachable for failover to work under non-Open network presets.
+      - api.tavily.com:443
+      - mcp.exa.ai:443
+      - mcp.firecrawl.dev:443
+      - search.parallel.ai:443
+      - agent.tinyfish.ai:443
       # The sbx proxy translates host.docker.internal to localhost on the host;
       # allow both spellings so agentmemory and host model servers stay
       # reachable regardless of sbx network preset.
@@ -45,6 +53,11 @@ setup:
           printf '%s\n' 'if [ -r ${{ kit.args.home }}/.config/opencode/agentmemory-secret ]; then AGENTMEMORY_SECRET=$(cat ${{ kit.args.home }}/.config/opencode/agentmemory-secret); export AGENTMEMORY_SECRET; fi' >> /etc/sandbox-persistent.sh
         fi
       description: Export the agentmemory API secret into the sandbox environment
+    - command: |
+        if ! grep -q websearch.env /etc/sandbox-persistent.sh 2>/dev/null; then
+          printf '%s\n' 'if [ -r ${{ kit.args.home }}/.config/opencode/websearch.env ]; then set -a; . ${{ kit.args.home }}/.config/opencode/websearch.env; set +a; fi' >> /etc/sandbox-persistent.sh
+        fi
+      description: Export websearch provider API keys (websearch.env) into the sandbox environment
 
 agentInstructions:
   content: |

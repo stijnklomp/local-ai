@@ -58,6 +58,19 @@ The sandbox reads OpenCode config, global instructions, plugins and commands fro
 
 It copies `opencode.json`, `global-AGENTS.md` (as `AGENTS.md`), `plugins/` and `commands/` into `~/.config/opencode`, creates `plugins/`, `commands/` and `skills/` when missing, validates `opencode.json` before copying, and keeps one `*.bak` per file — a fixed name, written on every run and overwritten in place, so backups never pile up. Other files in those directories are left alone. If you have customized `opencode.json`, merge your changes manually. The script is only ever run manually; nothing invokes it automatically. Changes apply the next time OpenCode starts; no sandbox rebuild is needed. Running it inside the sandbox aborts with a hint, because the sandbox sees those directories as symlinks.
 
+### Websearch provider keys
+
+Web search works without keys through the providers' keyless tiers; an API key raises that provider's quota. Add one by writing the provider's environment variable to `~/.config/opencode/websearch.env` on the host:
+
+```sh
+cat > ~/.config/opencode/websearch.env <<'EOF'
+TAVILY_API_KEY=tvly-...
+EOF
+chmod 600 ~/.config/opencode/websearch.env
+```
+
+One `VAR=value` per line; the built-in providers use `TAVILY_API_KEY`, `EXA_API_KEY`, `FIRECRAWL_API_KEY`, `PARALLEL_API_KEY` and `TINYFISH_API_KEY`. The kit exports the file into the sandbox environment at shell start-up, and its network allowlist covers all provider domains so `websearch.provider: "random"` can fail over between them. Both the export step and the domains are part of `spec.yaml` and therefore apply only at sandbox creation: recreate an existing sandbox once (`sbx rm <name>`, then relaunch) to pick them up; afterwards, editing `websearch.env` needs only a restart of OpenCode. The file lives outside the repo, is ignored by `sync-config.sh` and is never committed. `/connect` in the TUI is an alternative that stores a key inside the sandbox.
+
 ### OpenCode 2 specifics
 
 - `opencode.json` uses the native OpenCode 2 format: `providers`, `mcp.servers`, an ordered `permissions` array, `policies` (provider allowlist) and `update: "disable"`. OpenCode 2 still normalizes the v1 shapes, but this repo keeps the native format. Do not point an OpenCode 1 installation at this config; keep v1 usage on a separate config file.
@@ -65,7 +78,7 @@ It copies `opencode.json`, `global-AGENTS.md` (as `AGENTS.md`), `plugins/` and `
 - OpenCode 2 ignores the `instructions` config field. Global instructions live in `global-AGENTS.md`, which syncs to `~/.config/opencode/AGENTS.md` (OpenCode 2 discovers that file globally). The kit symlinks it into the sandbox home config directory.
 - OpenCode 1 plugin implementations do not run in OpenCode 2. `plugins/agentmemory-capture.ts` is written against the OpenCode 2 plugin API (`@opencode/plugin` 2.0.29) and is loaded from the global `~/.config/opencode/plugins/` directory.
 - The agentmemory MCP server sets `codemode: false` so its tools stay on the model's native tool list as `agentmemory_memory_*`; `/recall` and `/remember` and the tool deny rules depend on those names.
-- `websearch.provider` is pinned to `"random"`, so the first search in a fresh sandbox does not stop to ask which search provider to use. `random` selects any provider with credentials and retries with another on rate limits. Set it to a provider ID (`exa`, `firecrawl`, `parallel`, `tavily`, `tinyfish`) to pin one, or remove the key to get the selection prompt back; the provider domains must be reachable through the sbx network policy.
+- `websearch.provider` is pinned to `"random"`, so the first search in a fresh sandbox does not stop to ask which search provider to use. In `random` mode OpenCode keeps one provider per session and retries with another available provider when one returns HTTP 429 — this automatic failover exists only in `random` mode, so pinning a provider ID (`exa`, `firecrawl`, `parallel`, `tavily`, `tinyfish`) means a rate-limited provider keeps failing until its quota resets. Remove the key to get the selection prompt back; provider keys are covered in [Websearch provider keys](#websearch-provider-keys).
 - Project-local skills can be added with the `skills` config field; see `examples/opencode_project_skills_path_example.json`.
 - Capture mapping changed with the v2 event stream: sessions start/end from `session.created`/`session.deleted`, idle summarization from `session.status`/`session.idle`, compaction from `session.compaction.*`, assistant steps from `session.step.ended`, reasoning from `session.reasoning.ended`, permission prompts from `permission.asked`/`permission.replied`, and file changes from `filesystem.changed`. Tool calls, prompts, model params and compaction enrichment are captured through plugin hooks (`prompt`, `context`, `compaction`, `tool.execute.before`/`after`). The v1-only `command.executed` observation has no v2 equivalent; todo updates are captured as `todowrite` tool calls.
 

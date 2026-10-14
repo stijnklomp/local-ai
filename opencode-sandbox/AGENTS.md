@@ -19,7 +19,7 @@ Runs OpenCode 2 inside Docker Sandboxes (`sbx`, schema v2 kit) with the agentmem
 ## File Map
 | Path | Purpose |
 |------|---------|
-| spec.yaml | kit: `extends: opencode`, required `home` arg, network allowlist, installs OpenCode 2 CLI, symlinks global AGENTS.md, secret export |
+| spec.yaml | kit: `extends: opencode`, required `home` arg, network allowlist, installs OpenCode 2 CLI, symlinks global AGENTS.md, secret and websearch-key export |
 | opencode.json | native OpenCode 2 config: providers (ollama/llama-server on 172.17.0.1), mcp.servers, permissions, a pinned `websearch.provider` (`"random"`), provider policies, update disable |
 | global-AGENTS.md | global instructions; synced to ~/.config/opencode/AGENTS.md (OpenCode 2 ignores the `instructions` config field) |
 | agentmemory.env | host agentmemory config (OPENAI_MODEL); copy to ~/.agentmemory/.env |
