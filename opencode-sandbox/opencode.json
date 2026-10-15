@@ -13,7 +13,9 @@
     { "action": "*", "resource": "*", "effect": "allow" },
     { "action": "agentmemory_memory_slot_*", "resource": "*", "effect": "deny" },
     { "action": "agentmemory_memory_graph_query", "resource": "*", "effect": "deny" },
-    { "action": "agentmemory_memory_relations", "resource": "*", "effect": "deny" }
+    { "action": "agentmemory_memory_relations", "resource": "*", "effect": "deny" },
+    { "action": "shell", "resource": "git push *", "effect": "deny" },
+    { "action": "shell", "resource": "git -* push *", "effect": "deny" }
   ],
   "websearch": {
     "provider": "random"

@@ -12,6 +12,8 @@ One-time host setup, from this directory:
 | 2 | `sbx login` | One-time Docker OAuth sign-in; `sbx run` needs it. |
 | 3 | `cp agentmemory.env ~/.agentmemory/.env` | Host agentmemory configuration. Optional; skip if you don't want memory on this machine. |
 | 4 | `./scripts/sync-config.sh` | Copies this repo's OpenCode config into `~/.config/opencode`. Required before the first launch. |
+| 5 | `./scripts/install-skills.sh` | Optional: vendors [mattpocock/skills](https://github.com/mattpocock/skills) (clone + copy into the read-only mount). Re-run to update. |
+| 6 | `./scripts/setup-github-credential.sh` | Optional: approves the `github` credential for this kit and checks for a stored PAT (`sbx secret set github`); needed before sandboxed `gh` can act on GitHub. See [GitHub access](#github-access). |
 
 Launch OpenCode from any project directory:
 
@@ -24,6 +26,8 @@ After changing files in this repo:
 | Changed | Do |
 | ------- | -- |
 | `opencode.json`, `global-AGENTS.md`, `plugins/`, `commands/` | `./scripts/sync-config.sh`, then restart OpenCode inside the sandbox |
+| `scripts/install-skills.sh` or the vendored skills | run it on the host, then restart OpenCode; the copied skill directories are script-owned |
+| the GitHub binding or sbx credential state | re-run `./scripts/setup-github-credential.sh`; restart sandboxes that started before the change (`sbx stop <name>`) |
 | `spec.yaml`, `agentmemory.env` | Remove the sandbox (`sbx rm <name>`) and relaunch |
 
 `spec.yaml` is applied only when a sandbox is created. `./scripts/sync-config.sh` runs on the host only, never inside the sandbox.
@@ -58,6 +62,16 @@ The sandbox reads OpenCode config, global instructions, plugins and commands fro
 
 It copies `opencode.json`, `global-AGENTS.md` (as `AGENTS.md`), `plugins/` and `commands/` into `~/.config/opencode`, creates `plugins/`, `commands/` and `skills/` when missing, validates `opencode.json` before copying, and keeps one `*.bak` per file — a fixed name, written on every run and overwritten in place, so backups never pile up. Other files in those directories are left alone. If you have customized `opencode.json`, merge your changes manually. The script is only ever run manually; nothing invokes it automatically. Changes apply the next time OpenCode starts; no sandbox rebuild is needed. Running it inside the sandbox aborts with a hint, because the sandbox sees those directories as symlinks.
 
+### Skills
+
+The engineering and productivity skills from [mattpocock/skills](https://github.com/mattpocock/skills) are vendored on the host:
+
+- `./scripts/install-skills.sh` (host only) clones or `git pull`s the upstream into `~/.config/opencode/vendor/mattpocock-skills` and replaces `~/.config/opencode/skills/engineering/` and `skills/productivity/` with the current copies. Only those two directories are script-owned; your own skills live alongside them untouched.
+- The sandbox mounts `~/.config/opencode` read-only, so the copies appear inside without a download step. Restart OpenCode after running the script.
+- Edits to the copied skills are overwritten on the next run; keep your variants as separate skills.
+- Skills marked `disable-model-invocation: true` upstream (for example `grill-me`) stay hidden from the model and are loaded by mentioning them in a prompt, such as `@grill-me`; model-invoked skills are advertised automatically.
+- Run `@setup-matt-pocock-skills` once per project repo before using the engineering skills; it records the issue tracker, triage labels and domain-doc layout in that repo.
+
 ### Websearch provider keys
 
 Web search works without keys through the providers' keyless tiers; an API key raises that provider's quota. Add one by writing the provider's environment variable to `~/.config/opencode/websearch.env` on the host:
@@ -70,6 +84,34 @@ chmod 600 ~/.config/opencode/websearch.env
 ```
 
 One `VAR=value` per line; the built-in providers use `TAVILY_API_KEY`, `EXA_API_KEY`, `FIRECRAWL_API_KEY`, `PARALLEL_API_KEY` and `TINYFISH_API_KEY`. The kit exports the file into the sandbox environment at shell start-up, and its network allowlist covers all provider domains so `websearch.provider: "random"` can fail over between them. Both the export step and the domains are part of `spec.yaml` and therefore apply only at sandbox creation: recreate an existing sandbox once (`sbx rm <name>`, then relaunch) to pick them up; afterwards, editing `websearch.env` needs only a restart of OpenCode. The file lives outside the repo, is ignored by `sync-config.sh` and is never committed. `/connect` in the TUI is an alternative that stores a key inside the sandbox.
+
+### GitHub access
+
+Inside the sandbox `GH_TOKEN` is a sentinel value; the host-side proxy replaces it with a real credential on requests to `api.github.com`, `github.com`, `raw.githubusercontent.com` and related domains. Two host-side pieces are needed:
+
+1. **An approved credential binding.** This kit extends the built-in `opencode` kit but is itself third-party, so sbx withholds the `github` credential until a binding approves it — without one, sandboxes start with the credential silently withheld and `gh` reports the sentinel token as invalid. `./scripts/setup-github-credential.sh` writes the binding idempotently, merging with any existing entries in `~/.config/sbx/credentials.yaml`:
+
+```sh
+./scripts/setup-github-credential.sh
+```
+
+2. **A stored secret**: a fine-grained PAT with **Contents: Read-only**, **Issues: Read and write**, **Pull requests: Read and write** (Metadata: Read is mandatory). The missing Contents:write is deliberate: the sandbox must never push.
+
+```sh
+printf '%s' "$GITHUB_PAT" | sbx secret set github
+sbx secret ls
+```
+
+Sandboxes that started before the binding existed must be restarted to pick it up (`sbx stop <name>`; `sbx exec` below starts them again). Verify from the host:
+
+```sh
+sbx exec <name> gh auth status
+sbx exec <name> gh api user --jq .login
+```
+
+Inside the sandbox `gh` reports the sentinel as a `gho_...` token with `Token scopes: none` — that is expected for a fine-grained PAT behind the proxy. Rotating the PAT is re-running the `secret set` command; the token itself never enters the sandbox. `sbx reset` deletes stored secrets, so re-check afterwards.
+
+Pushing stays on the host by design: `opencode.json` denies `git push` through explicit shell rules after the allow catch-all, the stored PAT has no write scope, and no GitHub SSH key is made available to the sandbox. Push manually from the host. (SSH agent forwarding is on by default in sbx; `sbx settings set ssh.agentForwardingEnabled false` plus `sbx daemon restart` closes that path host-side too.)
 
 ### OpenCode 2 specifics
 
@@ -117,3 +159,6 @@ agentmemory advertises its full tool set regardless of which features are enable
 | `spec.yaml` sanity check | `sbx kit validate --kit-arg "home=$HOME" .` from this directory. |
 | Agent asks for approval before a command or edit | Launch via the launcher, which passes `--auto`; direct `sbx run`/dashboard attaches skip the flag. Anything hit by an explicit `deny` in `opencode.json` is blocked rather than prompted. |
 | First search asks which provider to use | `./scripts/sync-config.sh` (the config pins `websearch.provider: "random"`) and restart OpenCode. |
+| `gh auth status` says the token is invalid | No stored credential or no approved binding: run `./scripts/setup-github-credential.sh`, then store a PAT with `sbx secret set github` (see [GitHub access](#github-access)). |
+| `gh` works in one sandbox but not another after adding the secret | The binding is evaluated at sandbox start; restart that sandbox: `sbx stop <name>`, then `sbx exec <name> gh auth status`. |
+| `git push` is denied inside the sandbox | By design; pushes are reserved for the host (see [GitHub access](#github-access)). |
