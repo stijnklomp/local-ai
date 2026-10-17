@@ -14,6 +14,7 @@ One-time host setup, from this directory:
 | 4 | `./scripts/sync-config.sh` | Copies this repo's OpenCode config into `~/.config/opencode`. Required before the first launch. |
 | 5 | `./scripts/install-skills.sh` | Optional: vendors [mattpocock/skills](https://github.com/mattpocock/skills) (clone + copy into the read-only mount). Re-run to update. |
 | 6 | `./scripts/setup-github-credential.sh` | Optional: approves the `github` credential for this kit and checks for a stored PAT (`sbx secret set github`); needed before sandboxed `gh` can act on GitHub. See [GitHub access](#github-access). |
+| 7 | `sbx secret set-custom --host opencode.ai --env OPENCODE_API_KEY` | Optional: OpenCode (Console) PAT for the default `opencode-go` provider. Set it before the first launch. See [OpenCode (Console) access](#opencode-console-access). |
 
 Launch OpenCode from any project directory:
 
@@ -113,11 +114,37 @@ Inside the sandbox `gh` reports the sentinel as a `gho_...` token with `Token sc
 
 Pushing stays on the host by design: `opencode.json` denies `git push` through explicit shell rules after the allow catch-all, the stored PAT has no write scope, and no GitHub SSH key is made available to the sandbox. Push manually from the host. (SSH agent forwarding is on by default in sbx; `sbx settings set ssh.agentForwardingEnabled false` plus `sbx daemon restart` closes that path host-side too.)
 
+### OpenCode (Console) access
+
+The default model, `opencode-go/deepseek-v4.1-flash`, needs an OpenCode (Console) API key. Store a PAT as a custom sbx secret scoped to OpenCode's API host and exposed as `OPENCODE_API_KEY`:
+
+```sh
+sbx secret set-custom \
+  --host opencode.ai \
+  --env OPENCODE_API_KEY
+```
+
+Verify it is registered:
+
+```sh
+sbx secret ls
+```
+
+```text
+SCOPE      TARGETS       ENV                PLACEHOLDER               SECRET
+(global)   opencode.ai   OPENCODE_API_KEY   sbx-cs-...                oc_sk_****...****hdFI
+```
+
+OpenCode 2 reads `OPENCODE_API_KEY` natively as an environment connection to its `opencode` (Console) integration, and the `opencode-go` provider uses that integration. sbx injects a generated `sbx-cs-...` placeholder into every sandbox created after the secret exists, so no `auth.json` write, `/connect` step or stored credential is needed. The proxy substitutes the real key on requests to `opencode.ai`; the sandbox only sees the `PLACEHOLDER`. `sbx secret ls` masks the stored value in the `SECRET` column; that column staying populated confirms the secret is stored.
+
+Custom secrets apply only to sandboxes created after they are stored. Recreate an existing sandbox after adding the secret (`sbx rm <name>`, then relaunch); the same applies after changing the key. Without the secret the variable stays unset, OpenCode starts without the Console/Go connection, and the provider remains unavailable. Do not run `/connect` for this key: it stores the real key inside the sandbox database instead of using the proxy.
+
 ### OpenCode 2 specifics
 
 - `opencode.json` uses the native OpenCode 2 format: `providers`, `mcp.servers`, an ordered `permissions` array, `policies` (provider allowlist) and `update: "disable"`. OpenCode 2 still normalizes the v1 shapes, but this repo keeps the native format. Do not point an OpenCode 1 installation at this config; keep v1 usage on a separate config file.
 - The sandbox image ships OpenCode 1; the kit setup replaces it with the pinned OpenCode 2 CLI (`@opencode/cli` 2.0.29, pinned in `spec.yaml`). OpenCode 2 is distributed separately from OpenCode 1: GitHub Releases only lists 1.x, and `npm install -g @opencode/cli` is the v2 package.
 - OpenCode 2 ignores the `instructions` config field. Global instructions live in `global-AGENTS.md`, which syncs to `~/.config/opencode/AGENTS.md` (OpenCode 2 discovers that file globally). The kit symlinks it into the sandbox home config directory.
+- Credentials live in the server's SQLite database (`~/.local/share/opencode/opencode.db`); the legacy `auth.json` is imported only during the V1-to-V2 migration. The OpenCode Console key therefore arrives as the `OPENCODE_API_KEY` environment connection (see [OpenCode (Console) access](#opencode-console-access)), not as an auth file.
 - OpenCode 1 plugin implementations do not run in OpenCode 2. `plugins/agentmemory-capture.ts` is written against the OpenCode 2 plugin API (`@opencode/plugin` 2.0.29) and is loaded from the global `~/.config/opencode/plugins/` directory.
 - The agentmemory MCP server sets `codemode: false` so its tools stay on the model's native tool list as `agentmemory_memory_*`; `/recall` and `/remember` and the tool deny rules depend on those names.
 - `websearch.provider` is pinned to `"random"`, so the first search in a fresh sandbox does not stop to ask which search provider to use. In `random` mode OpenCode keeps one provider per session and retries with another available provider when one returns HTTP 429 — this automatic failover exists only in `random` mode, so pinning a provider ID (`exa`, `firecrawl`, `parallel`, `tavily`, `tinyfish`) means a rate-limited provider keeps failing until its quota resets. Remove the key to get the selection prompt back; provider keys are covered in [Websearch provider keys](#websearch-provider-keys).
@@ -156,6 +183,7 @@ agentmemory advertises its full tool set regardless of which features are enable
 | Sandbox cannot reach `172.17.0.1:11434`/`:8080` | Your sbx network preset denies the gateway. Allow it for this sandbox (`sbx policy allow network --sandbox <name> 172.17.0.1:11434,172.17.0.1:8080`) or switch those `baseURL`s to `http://host.docker.internal:<port>/v1` (the kit allows `localhost:11434`/`localhost:8080`; `host.docker.internal` does not resolve on the host). |
 | Config edits don't show up in the sandbox | Run `./scripts/sync-config.sh` and restart OpenCode. For `spec.yaml` or `agentmemory.env` changes, recreate the sandbox: `sbx rm <name>`, then relaunch. |
 | agentmemory tools missing or reduced | The host server is unreachable; start it or keep working, explicit saves stay sandbox-local (see [agentmemory is optional](#agentmemory-is-optional)). |
+| OpenCode Console/Go asks for `/connect` or shows unauthenticated | The custom secret was added after this sandbox was created, so `OPENCODE_API_KEY` is unset. Recreate the sandbox (`sbx rm <name>`, then relaunch) and do not run `/connect`; see [OpenCode (Console) access](#opencode-console-access). |
 | `spec.yaml` sanity check | `sbx kit validate --kit-arg "home=$HOME" .` from this directory. |
 | Agent asks for approval before a command or edit | Launch via the launcher, which passes `--auto`; direct `sbx run`/dashboard attaches skip the flag. Anything hit by an explicit `deny` in `opencode.json` is blocked rather than prompted. |
 | First search asks which provider to use | `./scripts/sync-config.sh` (the config pins `websearch.provider: "random"`) and restart OpenCode. |

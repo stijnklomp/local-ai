@@ -1,6 +1,6 @@
 <!-- FOR AI AGENTS - Human readability is a side effect, not a goal -->
 <!-- Managed by agent: keep sections and order; edit content, not structure -->
-<!-- Last updated: 2026-10-15 | Last verified: 2026-10-15 -->
+<!-- Last updated: 2026-10-17 | Last verified: 2026-10-17 -->
 
 # AGENTS.md — opencode-sandbox
 
@@ -45,6 +45,7 @@ Runs OpenCode 2 inside Docker Sandboxes (`sbx`, schema v2 kit) with the agentmem
 | Needing global instructions | edit global-AGENTS.md; the `instructions` config field is ignored by v2 |
 | Adding an agentmemory tool deny | put it after the allow rule in `permissions`; last matching permission rule wins |
 | Adding or updating the mattpocock skills | run `./scripts/install-skills.sh` on the host (it git-pulls the vendor clone first), then restart OpenCode; the copied skill directories are overwritten on every run |
+| Giving OpenCode Console/Go its API key | store it before sandbox creation with `sbx secret set-custom --host opencode.ai --env OPENCODE_API_KEY`; sbx injects the placeholder and OpenCode 2 reads it as the `opencode` integration environment connection used by the `opencode-go` provider. Do not declare `OPENCODE_API_KEY` in `spec.yaml`, write `auth.json`, or use `/connect`: V2 keeps credentials in SQLite and `/connect` puts the real key inside the sandbox |
 | Giving sandboxed `gh` GitHub access | run `./scripts/setup-github-credential.sh` (approves the `github` binding; required because the kit is third-party) and store a fine-grained PAT (Contents: Read-only; Issues and Pull requests: write) with `sbx secret set github`; sandboxes started before the binding need `sbx stop <name>`; the proxy injects the token, the sandbox only ever sees a sentinel |
 | Keeping pushes on the host | `git push` is denied by the shell rules in opencode.json (after the allow catch-all); the stored PAT has no Contents:write and no GitHub SSH key is loaded; the user pushes manually |
 | Host agentmemory health check fails | expected path; the sandbox runs a reduced local toolset until host :3111 is back |
