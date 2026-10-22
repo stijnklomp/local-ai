@@ -49,6 +49,22 @@ else
   rm -f "$SECRET_FILE"
 fi
 
+# sbx mounts the shared skills store automatically only for its built-in agents.
+# This v2 custom kit cannot declare the v3 `agent-skills` capability, so mount
+# the store read-only at its host path and tell the kit where to find it. The
+# marker file lives in the read-only config mount; the kit reads it at startup.
+SKILLS_STORE="${XDG_STATE_HOME:-$HOME/.local/state}/sandboxes/sandboxes/agent-skills"
+SKILLS_STORE_FILE="$HOME/.config/opencode/skills-store"
+SKILLS_MOUNT=()
+if [ -d "$SKILLS_STORE" ]; then
+  printf '%s\n' "$SKILLS_STORE" > "$SKILLS_STORE_FILE"
+  SKILLS_MOUNT=("$SKILLS_STORE:ro")
+  echo "skills: shared store available at $SKILLS_STORE."
+else
+  rm -f "$SKILLS_STORE_FILE"
+  echo "skills: no shared store at $SKILLS_STORE (optional; install with 'sbx skills add <repository>')." >&2
+fi
+
 AUTH_HEADER=()
 if [ -n "$SECRET" ]; then
   AUTH_HEADER=(-H "Authorization: Bearer $SECRET")
@@ -84,5 +100,6 @@ else
     "$REPO_DIR" \
     . \
     "$HOME/.config/opencode:ro" \
+    "${SKILLS_MOUNT[@]}" \
     -- --auto
 fi

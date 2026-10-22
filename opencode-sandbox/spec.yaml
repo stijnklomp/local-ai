@@ -3,7 +3,7 @@ kind: sandbox
 name: opencode-agentmemory
 displayName: OpenCode + agentmemory
 description: >-
-  OpenCode 2 with the agentmemory MCP connected directly to the host agentmemory server, and the host opencode config, skills, plugins and commands mounted read-only (edits on the host apply without rebuilding the kit). Launch it via scripts/run-opencode-in-docker-sandbox.sh, which supplies the required home argument.
+  OpenCode 2 with the agentmemory MCP connected directly to the host agentmemory server, and the host opencode config, plugins, commands and custom skills mounted read-only (edits on the host apply without rebuilding the kit). Repository skills installed with sbx skills add are mounted from the sbx shared store by the launcher and linked into OpenCode. Launch it via scripts/run-opencode-in-docker-sandbox.sh, which supplies the required home argument.
 
 extends: opencode
 
@@ -46,8 +46,8 @@ setup:
       description: Install the pinned agentmemory MCP client (reinstall if the image ships another version)
     - command: "command -v opencode >/dev/null 2>&1 && opencode --version 2>/dev/null | grep -q 'v2\\.' || { npm uninstall -g opencode-ai >/dev/null 2>&1 || true; npm install -g @opencode/cli@2.0.29 --no-fund --no-audit; }"
       description: Replace the kit's OpenCode 1 with the pinned OpenCode 2 CLI (@opencode/cli)
-    - command: "mkdir -p /home/agent/.config/opencode && ln -sfn '${{ kit.args.home }}/.config/opencode/skills' /home/agent/.config/opencode/skills && ln -sfn '${{ kit.args.home }}/.config/opencode/commands' /home/agent/.config/opencode/commands && ln -sfn '${{ kit.args.home }}/.config/opencode/plugins' /home/agent/.config/opencode/plugins && ln -sfn '${{ kit.args.home }}/.config/opencode/AGENTS.md' /home/agent/.config/opencode/AGENTS.md"
-      description: Symlink skills, commands, plugins and global instructions from the read-only host mount
+    - command: "mkdir -p /home/agent/.config/opencode/skills && chown 1000:1000 /home/agent/.config/opencode/skills && ln -sfn '${{ kit.args.home }}/.config/opencode/commands' /home/agent/.config/opencode/commands && ln -sfn '${{ kit.args.home }}/.config/opencode/plugins' /home/agent/.config/opencode/plugins && ln -sfn '${{ kit.args.home }}/.config/opencode/AGENTS.md' /home/agent/.config/opencode/AGENTS.md"
+      description: Create the skills directory and symlink commands, plugins and global instructions from the read-only host mount
     - command: |
         if ! grep -q AGENTMEMORY_SECRET /etc/sandbox-persistent.sh 2>/dev/null; then
           printf '%s\n' 'if [ -r ${{ kit.args.home }}/.config/opencode/agentmemory-secret ]; then AGENTMEMORY_SECRET=$(cat ${{ kit.args.home }}/.config/opencode/agentmemory-secret); export AGENTMEMORY_SECRET; fi' >> /etc/sandbox-persistent.sh
@@ -58,11 +58,61 @@ setup:
           printf '%s\n' 'if [ -r ${{ kit.args.home }}/.config/opencode/websearch.env ]; then set -a; . ${{ kit.args.home }}/.config/opencode/websearch.env; set +a; fi' >> /etc/sandbox-persistent.sh
         fi
       description: Export websearch provider API keys (websearch.env) into the sandbox environment
+  # sbx only mounts the shared skills store for its built-in agents, and a v2
+  # custom kit cannot declare the v3 `agent-skills` capability. The launcher
+  # therefore mounts the store read-only at its host path and writes that path
+  # to skills-store in the config mount. Merge the store and host skills one
+  # directory at a time; a single symlink for the whole directory would hide
+  # the other source.
+  startup:
+    - command:
+        - sh
+        - -c
+        - |
+          set -eu
+          skills=/home/agent/.config/opencode/skills
+          host_skills='${{ kit.args.home }}/.config/opencode/skills'
+          store_file='${{ kit.args.home }}/.config/opencode/skills-store'
+          store=''
+          if [ -r "$store_file" ]; then
+            IFS= read -r store < "$store_file" || true
+          fi
+          [ -n "$store" ] || store='${{ kit.args.home }}/.local/state/sandboxes/sandboxes/agent-skills'
+
+          # Drop links this kit created on an earlier start.
+          for link in "$skills"/*; do
+            [ -L "$link" ] || continue
+            case "$(readlink "$link")" in
+              "$host_skills"/*|"$store"/*) rm -f "$link" ;;
+            esac
+          done
+
+          link_skill() {
+            src=$1
+            [ -f "$src/SKILL.md" ] || return 0
+            dest="$skills/$(basename "$src")"
+            if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+              return 0
+            fi
+            ln -sfn "$src" "$dest"
+          }
+
+          # Store entries first; a host skill with the same name wins.
+          if [ -d "$store" ]; then
+            for skill in "$store"/*; do
+              link_skill "$skill"
+            done
+          fi
+          for skill in "$host_skills"/*; do
+            link_skill "$skill"
+          done
+      description: Link the sbx shared skills store and the host's custom skills into the sandbox skills directory on every start
 
 agentInstructions:
   content: |
     ## Sandbox environment
 
-    - OpenCode config, skills, plugins and commands are mounted read-only from the host at `${{ kit.args.home }}/.config/opencode`. The host `AGENTS.md` there is symlinked into `/home/agent/.config/opencode/AGENTS.md` as the global instruction file. Edit them on the host; changes apply without rebuilding this sandbox.
+    - OpenCode config, plugins, commands and custom skills are mounted read-only from the host at `${{ kit.args.home }}/.config/opencode`. The host `AGENTS.md` there is symlinked into `/home/agent/.config/opencode/AGENTS.md` as the global instruction file. Edit them on the host; changes apply without rebuilding this sandbox.
+    - Custom skills are the subdirectories of `~/.config/opencode/skills` that contain a `SKILL.md`; the kit links each one into `/home/agent/.config/opencode/skills` at sandbox start. Repository skills installed with `sbx skills add` live in the host's shared store; because this v2 custom kit cannot receive sbx's automatic skills mount, the launcher mounts the store read-only and the kit links its entries beside the custom skills. Manage store skills on the host with `sbx skills add` / `sbx skills update`. New store entries appear after the sandbox's next start, and sandboxes created before the mount existed must be recreated once.
     - The `agentmemory` MCP connects directly to the host agentmemory server at `http://host.docker.internal:3111` (see `AGENTMEMORY_URL`). This is optional: if the host server is not running, the MCP automatically switches to a reduced sandbox-local toolset (explicit saves only, kept inside the sandbox and never synced to the host) and automatic capture pauses. The full toolset and capture resume automatically once the host server is reachable again.
     - Docker is available inside the sandbox; prefer it for running code. `sudo` is passwordless for the `agent` user.

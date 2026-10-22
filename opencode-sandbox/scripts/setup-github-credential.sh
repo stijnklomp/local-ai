@@ -14,7 +14,7 @@ GITHUB_BLOCK='  github:
     apiKey:
       domains: [api.github.com, github.com]'
 
-if [ -L "${HOME}/.config/opencode/plugins" ] || [ -L "${HOME}/.config/opencode/commands" ] || [ -L "${HOME}/.config/opencode/skills" ]; then
+if [ -L "${HOME}/.config/opencode/plugins" ] || [ -L "${HOME}/.config/opencode/commands" ]; then
   echo "Error: ${HOME}/.config/opencode looks like the sandbox view (symlinks)." >&2
   echo "Run this script on the host, not inside the Docker sandbox." >&2
   exit 1

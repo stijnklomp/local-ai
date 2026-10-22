@@ -12,7 +12,7 @@ One-time host setup, from this directory:
 | 2 | `sbx login` | One-time Docker OAuth sign-in; `sbx run` needs it. |
 | 3 | `cp agentmemory.env ~/.agentmemory/.env` | Host agentmemory configuration. Optional; skip if you don't want memory on this machine. |
 | 4 | `./scripts/sync-config.sh` | Copies this repo's OpenCode config into `~/.config/opencode`. Required before the first launch. |
-| 5 | `./scripts/install-skills.sh` | Optional: vendors [mattpocock/skills](https://github.com/mattpocock/skills) (clone + copy into the read-only mount). Re-run to update. |
+| 5 | `sbx skills add mattpocock/skills` | Optional: installs [mattpocock/skills](https://github.com/mattpocock/skills) into the sbx shared skill store. The launcher mounts the store and the kit links its entries into OpenCode at the next sandbox start; recreate a sandbox created before this mount existed. See [Skills](#skills). |
 | 6 | `./scripts/setup-github-credential.sh` | Optional: approves the `github` credential for this kit and checks for a stored PAT (`sbx secret set github`); needed before sandboxed `gh` can act on GitHub. See [GitHub access](#github-access). |
 | 7 | `sbx secret set-custom --host opencode.ai --env OPENCODE_API_KEY` | Optional: OpenCode (Console) PAT for the default `opencode-go` provider. Set it before the first launch. See [OpenCode (Console) access](#opencode-console-access). |
 
@@ -27,7 +27,8 @@ After changing files in this repo:
 | Changed | Do |
 | ------- | -- |
 | `opencode.json`, `global-AGENTS.md`, `plugins/`, `commands/` | `./scripts/sync-config.sh`, then restart OpenCode inside the sandbox |
-| `scripts/install-skills.sh` or the vendored skills | run it on the host, then restart OpenCode; the copied skill directories are script-owned |
+| Skills in the sbx shared store | manage them on the host with `sbx skills add` / `sbx skills update`; new entries appear at the next sandbox start, updated contents at the next OpenCode session. The launcher mounts the store, so recreate sandboxes created before that mount existed |
+| Your own skills in `~/.config/opencode/skills` | edit them on the host; the kit relinks them at the next sandbox start (only subdirectories with a `SKILL.md` are linked) |
 | the GitHub binding or sbx credential state | re-run `./scripts/setup-github-credential.sh`; restart sandboxes that started before the change (`sbx stop <name>`) |
 | `spec.yaml`, `agentmemory.env` | Remove the sandbox (`sbx rm <name>`) and relaunch |
 
@@ -61,16 +62,32 @@ The sandbox reads OpenCode config, global instructions, plugins and commands fro
 ./scripts/sync-config.sh
 ```
 
-It copies `opencode.json`, `global-AGENTS.md` (as `AGENTS.md`), `plugins/` and `commands/` into `~/.config/opencode`, creates `plugins/`, `commands/` and `skills/` when missing, validates `opencode.json` before copying, and keeps one `*.bak` per file — a fixed name, written on every run and overwritten in place, so backups never pile up. Other files in those directories are left alone. If you have customized `opencode.json`, merge your changes manually. The script is only ever run manually; nothing invokes it automatically. Changes apply the next time OpenCode starts; no sandbox rebuild is needed. Running it inside the sandbox aborts with a hint, because the sandbox sees those directories as symlinks.
+It copies `opencode.json`, `global-AGENTS.md` (as `AGENTS.md`), `plugins/` and `commands/` into `~/.config/opencode`, creates `plugins/`, `commands/` and `skills/` when missing, validates `opencode.json` before copying, and keeps one `*.bak` per file — a fixed name, written on every run and overwritten in place, so backups never pile up. Other files in those directories are left alone. If you have customized `opencode.json`, merge your changes manually. The script is only ever run manually; nothing invokes it automatically. Changes apply the next time OpenCode starts; no sandbox rebuild is needed. Running it inside the sandbox aborts with a hint, because the sandbox sees `plugins/` and `commands/` as symlinks.
 
 ### Skills
 
-The engineering and productivity skills from [mattpocock/skills](https://github.com/mattpocock/skills) are vendored on the host:
+Agent skills come from two places, both exposed through `/home/agent/.config/opencode/skills`, the global path OpenCode 2 scans:
 
-- `./scripts/install-skills.sh` (host only) clones or `git pull`s the upstream into `~/.config/opencode/vendor/mattpocock-skills` and replaces `~/.config/opencode/skills/engineering/` and `skills/productivity/` with the current copies. Only those two directories are script-owned; your own skills live alongside them untouched.
-- The sandbox mounts `~/.config/opencode` read-only, so the copies appear inside without a download step. Restart OpenCode after running the script.
-- Edits to the copied skills are overwritten on the next run; keep your variants as separate skills.
-- Skills marked `disable-model-invocation: true` upstream (for example `grill-me`) stay hidden from the model and are loaded by mentioning them in a prompt, such as `@grill-me`; model-invoked skills are advertised automatically.
+- Repository skills in the sbx shared store, installed with `sbx skills add`.
+- Your own skills under `~/.config/opencode/skills` on the host.
+
+`sbx` mounts the shared store automatically only for its built-in agents. This is a v2 custom kit, which cannot declare the v3 `agent-skills` capability, so the launcher mounts the store read-only at its host path (`${XDG_STATE_HOME:-~/.local/state}/sandboxes/sandboxes/agent-skills`) and records that path in `~/.config/opencode/skills-store`. The kit links each store entry, and each of your custom skill directories containing a `SKILL.md`, into the sandbox skills directory on every start. A host skill with the same directory name wins over a store entry.
+
+Install the mattpocock skills on the host:
+
+```sh
+sbx skills add mattpocock/skills
+sbx skills ls
+```
+
+- `sbx skills add` installs every `SKILL.md` it discovers. For `mattpocock/skills` that includes the `in-progress/` and `misc/` buckets; pass `--skill <name>` (repeatable or comma-separated) to install a subset.
+- Update repository-installed skills with `sbx skills update` (optionally with skill names).
+- Your own host skills are linked directly, so they do not need `sbx skills import`. Import is only for copying them into the shared store for other agents or sandboxes; an import replaces the store entry with a copy, so `sbx skills update` no longer manages it.
+- The store mount is read-only and fixed when the sandbox is created. Recreate an existing sandbox once (`sbx rm <name>`, then relaunch) after pulling a change to the launcher or kit; otherwise it keeps its original mounts.
+- New store entries reach a running sandbox only at its next start (`sbx stop <name>`, then relaunch). Updated contents are live through the link, but OpenCode may scan skills only at session start, so start a new session. Removed entries disappear at the next start.
+- The shared store is experimental and `sbx reset` clears it.
+- If you used the removed `./scripts/install-skills.sh`, delete `~/.config/opencode/vendor/mattpocock-skills` and the copied `engineering/` and `productivity/` directories under `~/.config/opencode/skills`. They are no longer used, and the category directories would not be linked because they contain no top-level `SKILL.md`.
+- Skills marked `disable-model-invocation: true` upstream (for example `grill-me`) stay hidden from the model's skill list. Invoke them manually with the `/skills` picker (it inserts `@grill-me` into the prompt), or mention `@grill-me` directly; model-invoked skills are advertised automatically.
 - Run `@setup-matt-pocock-skills` once per project repo before using the engineering skills; it records the issue tracker, triage labels and domain-doc layout in that repo.
 
 ### Websearch provider keys
