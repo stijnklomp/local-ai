@@ -1,0 +1,93 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "policies": [
+    { "action": "provider.use", "resource": "*", "effect": "deny" },
+    { "action": "provider.use", "resource": "ollama", "effect": "allow" },
+    { "action": "provider.use", "resource": "llama-server", "effect": "allow" },
+    { "action": "provider.use", "resource": "opencode", "effect": "allow" },
+    { "action": "provider.use", "resource": "opencode-go", "effect": "allow" },
+    { "action": "provider.use", "resource": "openrouter", "effect": "allow" }
+  ],
+  "permissions": [
+    { "action": "*", "resource": "*", "effect": "allow" },
+    { "action": "agentmemory_memory_slot_*", "resource": "*", "effect": "deny" },
+    { "action": "agentmemory_memory_graph_query", "resource": "*", "effect": "deny" },
+    { "action": "agentmemory_memory_relations", "resource": "*", "effect": "deny" },
+    { "action": "execute_code", "resource": "*", "effect": "deny" },
+    { "action": "*_execute_code", "resource": "*", "effect": "deny" },
+    { "action": "execute_code_headless", "resource": "*", "effect": "deny" },
+    { "action": "*_execute_code_headless", "resource": "*", "effect": "deny" },
+    { "action": "run_macro", "resource": "*", "effect": "deny" },
+    { "action": "*_run_macro", "resource": "*", "effect": "deny" },
+    { "action": "run_skill_script", "resource": "*", "effect": "deny" },
+    { "action": "*_run_skill_script", "resource": "*", "effect": "deny" },
+    { "action": "use_skill", "resource": "*", "effect": "deny" },
+    { "action": "*_use_skill", "resource": "*", "effect": "deny" },
+    { "action": "shell", "resource": "git push *", "effect": "deny" },
+    { "action": "shell", "resource": "git -* push *", "effect": "deny" }
+  ],
+  "websearch": {
+    "provider": "random"
+  },
+  "mcp": {
+    "servers": {
+      "agentmemory": {
+        "type": "local",
+        "command": ["agentmemory", "mcp"],
+        "environment": {
+          "AGENTMEMORY_URL": "http://host.docker.internal:3111"
+        },
+        "codemode": false
+      }
+    }
+  },
+  "providers": {
+    "opencode-go": {
+      "models": {
+        "deepseek-v4.1-flash": {
+          "settings": {
+            "reasoningEffort": "max"
+          }
+        }
+      }
+    },
+    "openrouter": {
+      "models": {
+        "auto": {
+          "name": "Auto Router (dynamic)"
+        }
+      }
+    },
+    "ollama": {
+      "settings": {
+        "baseURL": "http://172.17.0.1:11434/v1"
+      },
+      "models": {
+        "mistral-nemo:12b": {
+          "name": "Mistal Nemo (12B) General (Nvidia GPU optimized)"
+        }
+      }
+    },
+    "llama-server": {
+      "name": "llama.cpp (local, RTX 5080)",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "http://172.17.0.1:8080/v1"
+      },
+      "models": {
+        "Qwen3.8-27B-UD-IQ4_XS.gguf": {
+          "name": "Qwen 3.8 (27B) IQ4_XS, 256K ctx, MTP",
+          "limit": {
+            "context": 262144,
+            "output": 32768
+          }
+        }
+      }
+    }
+  },
+  "update": "disable",
+  "watcher": {
+    "ignore": ["node_modules/**", "dist/**"]
+  }
+}
