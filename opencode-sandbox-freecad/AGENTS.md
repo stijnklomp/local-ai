@@ -12,10 +12,13 @@ FreeCAD 1.1.3 runs on the host with the FreeCAD AI workbench, and the `freecad` 
 
 ## Orient yourself before cutting anything
 
-Words like "above", "left", "bottom" and "the other one" are unreliable. A viewer is often looking at the part from a side that does not match the model axes — a 180° rotation is common — and a wrong feature costs a full rebuild.
+Words like "above", "left", "bottom" and "the other one" are unreliable on their own. A viewer is often looking at the part from a side that does not match the model axes — a 180° rotation is common — and a wrong feature costs a full rebuild.
 
-- Turn every positional request into a measured one. "The small compartment above it" becomes "the 46 × 31.6 pocket at X −81.75…−35.75".
-- Restate the target and its dimensions in your reply before modelling, so the user can correct you cheaply.
+- Tie every positional description to a named viewpoint. Name the view, then the position within it: "looking from the TOP viewpoint, the square in the top right", "seen from the FRONT, the tall rib on the left". This is far easier to picture than raw coordinates.
+- Keep the measured coordinates as the authoritative part of the description. Use the viewpoint words to make it understandable and the numbers to make it exact: "looking from the TOP viewpoint, the square in the top right (the 46 × 31.6 pocket at X −81.75…−35.75)".
+- The camera belongs to the user. They can orbit, pan, zoom, rotate or switch viewpoints at any moment, including between messages and while you are working. Never assume the current viewpoint. State which viewpoint you are describing from, and when it matters ask the user what they are looking at or set it yourself (`set_view` with `orientation`, then confirm with `capture_viewport`).
+- Turn every positional request into a measured one. "The small compartment above it" becomes "the 46 × 31.6 pocket at X −81.75…−35.75", after confirming which viewpoint "above" refers to.
+- Restate the target, its viewpoint frame and its dimensions in your reply before modelling, so the user can correct you cheaply.
 - When two candidates are close in size, ask which one rather than picking.
 
 ## Measure what already exists
