@@ -6,6 +6,10 @@ const FILE_TOOLS = new Set(["read", "write", "edit", "glob", "grep"]);
 const FILE_KEYS = ["filePath", "file_path", "path", "file", "pattern"];
 const MAX_STASHED_FILES = 20;
 const IDLE_SUMMARIZE_COOLDOWN_MS = 3000;
+// Title-only pointer to earlier sessions, injected once per user prompt.
+const POINTER_SESSION_LIMIT = 5;
+const POINTER_CACHE_MS = 60000;
+const POINTER_TITLE_MAX = 60;
 
 const DEBUG = process.env.OPENCODE_AGENTMEMORY_DEBUG === "1";
 const SECRET = process.env.AGENTMEMORY_SECRET || "";
@@ -72,6 +76,30 @@ async function postJson(path: string, body: Record<string, unknown>): Promise<un
   }
 }
 
+async function getJson(path: string): Promise<unknown | null> {
+  try {
+    const res = await fetch(`${API}/agentmemory${path}`, {
+      method: "GET",
+      headers: authHeaders(),
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok ? await res.json() : null;
+  } catch (e) {
+    if (DEBUG) console.error(`[agentmemory] GET ${path} failed:`, (e as Error).message);
+    return null;
+  }
+}
+
+function escapeText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function oneLine(v: unknown, max: number): string {
+  if (typeof v !== "string") return "";
+  const text = v.replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 function safeSlice(v: unknown, max: number): string {
   if (typeof v === "string") return v.slice(0, max);
   if (v == null) return "";
@@ -101,6 +129,41 @@ export default Plugin.define({
     const stashedFiles = new Map<string, Set<string>>();
     const toolStarts = new Map<string, { tool: string; input: unknown; start: number }>();
     const lastIdleSummarize = new Map<string, number>();
+    // Sessions that owe a pointer on their next model request, plus a
+    // short-lived cache of this project's recent session titles.
+    const pointerPending = new Set<string>();
+    let pointerCache: { at: number; entries: SessionPointerEntry[] } | null = null;
+
+    type SessionPointerEntry = { id: string; date: string; title: string };
+
+    async function sessionPointer(sid: string): Promise<string | null> {
+      if (!pointerCache || Date.now() - pointerCache.at > POINTER_CACHE_MS) {
+        const res = await getJson(
+          `/sessions?project=${encodeURIComponent(projectPath)}&limit=${POINTER_SESSION_LIMIT * 2}`,
+        );
+        const raw = (res as any)?.sessions;
+        const list: any[] = Array.isArray(raw) ? raw : [];
+        const entries: SessionPointerEntry[] = list
+          .map((s) => ({
+            id: typeof s?.id === "string" ? s.id : "",
+            date: typeof s?.startedAt === "string" ? s.startedAt.slice(0, 10) : "",
+            title: oneLine(s?.summary?.title ?? s?.firstPrompt, POINTER_TITLE_MAX),
+          }))
+          .filter((e) => e.id.length > 0 && e.title.length > 0)
+          .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+        pointerCache = { at: Date.now(), entries };
+      }
+      const entries = (pointerCache?.entries ?? [])
+        .filter((e) => e.id !== sid)
+        .slice(0, POINTER_SESSION_LIMIT);
+      if (entries.length === 0) return null;
+      return [
+        "<agentmemory-sessions>",
+        "Earlier sessions in this project. Call memory_recall or memory_smart_search for details.",
+        ...entries.map((e) => `- ${e.date || "unknown date"}  ${escapeText(e.title)}`),
+        "</agentmemory-sessions>",
+      ].join("\n");
+    }
 
     function stashFor(sid: string): Set<string> {
       let s = stashedFiles.get(sid);
@@ -261,6 +324,7 @@ export default Plugin.define({
               if (sid === activeSessionId) activeSessionId = null;
               stashedFiles.delete(sid);
               lastIdleSummarize.delete(sid);
+              pointerPending.delete(sid);
               break;
             }
 
@@ -366,6 +430,10 @@ export default Plugin.define({
     await ctx.session.hook("prompt", async (event) => {
       const sid = event.sessionID || activeSessionId;
       if (!sid) return;
+      // Arm the title-only pointer for the next model request. Doing it per
+      // prompt means it also returns after a session clear, not just on a new
+      // session.
+      pointerPending.add(sid);
       const text = event.prompt.text ?? "";
       const files = (event.prompt.files ?? [])
         .map((f) => f.uri || f.name)
@@ -389,6 +457,14 @@ export default Plugin.define({
     await ctx.session.hook("context", async (event) => {
       const sid = event.sessionID || activeSessionId;
       if (!sid) return;
+
+      // Title-only pointer to earlier sessions, once per user prompt. Titles
+      // and dates only, so an unrelated session cannot feed the model stale
+      // narratives; it decides whether to recall details.
+      if (pointerPending.delete(sid)) {
+        const pointer = await sessionPointer(sid);
+        if (pointer) event.system.push({ type: "text", text: pointer });
+      }
 
       // File enrichment injection for stashed files.
       const stash = stashFor(sid);
@@ -503,6 +579,8 @@ export default Plugin.define({
       stashedFiles.clear();
       toolStarts.clear();
       lastIdleSummarize.clear();
+      pointerPending.clear();
+      pointerCache = null;
     };
   },
 });

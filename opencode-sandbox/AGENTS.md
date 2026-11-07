@@ -34,7 +34,7 @@ Runs OpenCode 2 inside Docker Sandboxes (`sbx`, schema v3 workload kit) with the
 | scripts/sync-config.sh | repo to ~/.config/opencode; aborts when plugins/ or commands/ are symlinks (that is the sandbox view) |
 | scripts/setup-github-credential.sh | host-only: ensures the `github` apiKey binding (api.github.com, github.com) in ~/.config/sbx/credentials.yaml without clobbering other bindings, reports whether a github service secret is stored |
 | commands/recall.md, commands/remember.md | /recall and /remember slash commands over agentmemory tools |
-| plugins/agentmemory-capture.ts | OpenCode 2 plugin (`@opencode/plugin`): subscribes to events and registers prompt/context/compaction/tool hooks; cleanup posts synchronously via curl |
+| plugins/agentmemory-capture.ts | OpenCode 2 plugin (`@opencode/plugin`): subscribes to events and registers prompt/context/compaction/tool hooks; injects a title-only pointer to recent project sessions once per prompt (so it returns after `/clear`), compaction injects the full `/context` budget; cleanup posts synchronously via curl |
 | examples/opencode_project_skills_path_example.json | example `skills` config field for project-local skills |
 
 ## Heuristics
