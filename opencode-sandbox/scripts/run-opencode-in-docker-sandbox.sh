@@ -68,8 +68,10 @@ if curl -fsS --max-time 2 \
 else
   echo "agentmemory: not running on the host; continuing without it." >&2
   echo >&2
-  echo "Start it manually at any time with:" >&2
-  echo "  cd \$HOME/.local/share/agentmemory && NODE_OPTIONS='--max-old-space-size=4096' agentmemory" >&2
+  echo "Start it at any time with:" >&2
+  echo "  $REPO_DIR/scripts/agentmemory-host.sh" >&2
+  echo "Stop it with:" >&2
+  echo "  $REPO_DIR/scripts/agentmemory-host.sh stop" >&2
 fi
 
 echo "sandbox: checking for existing sandbox \"$SANDBOX_NAME\"..."

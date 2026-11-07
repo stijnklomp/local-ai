@@ -22,6 +22,8 @@ Launch OpenCode from any project directory:
 /path/to/local-ai/opencode-sandbox/scripts/run-opencode-in-docker-sandbox.sh
 ```
 
+The host agentmemory server is separate. Start it in another terminal with `./scripts/agentmemory-host.sh` (foreground by default), and stop it with `./scripts/agentmemory-host.sh stop`. See [Running the host server](#running-the-host-server).
+
 After changing files in this repo:
 
 | Changed | Do |
@@ -31,7 +33,7 @@ After changing files in this repo:
 | Your own skills in `~/.config/opencode/skills` | edit them on the host; they are read live from the read-only host mount through the `skills` config field |
 | the GitHub binding or sbx credential state | re-run `./scripts/setup-github-credential.sh`; restart sandboxes that started before the change (`sbx stop <name>`) |
 | `opencode-sandbox.yaml`, `opencode-sandbox.dockerfile` | Remove the sandbox (`sbx rm <name>`) and relaunch |
-| `agentmemory.env` | Restart the host agentmemory server; the sandbox reads only the secret written by the launcher, so no sandbox rebuild is needed |
+| `agentmemory.env` | Restart the host server through the wrapper (`./scripts/agentmemory-host.sh stop`, then `./scripts/agentmemory-host.sh`); the sandbox reads only the secret written by the launcher, so no sandbox rebuild is needed |
 | An existing sandbox created with the v2 kit | v2 sandboxes cannot be updated in place: `sbx rm <name>`, then relaunch once |
 
 The kit is built and applied only when a sandbox is created. `./scripts/sync-config.sh` runs on the host only, never inside the sandbox.
@@ -182,6 +184,25 @@ The Ollama setup, firewall rules and model instructions live in [`../local-model
 
 agentmemory does not have to be running to use the sandbox. If the host health check fails, the launcher prints a note and starts anyway. Inside the sandbox the agentmemory MCP then falls back to a reduced sandbox-local toolset (explicit saves only, kept inside the sandbox and never synced to the host) and automatic session capture pauses. The full toolset and capture resume automatically once the host server is reachable again.
 
+### Running the host server
+
+Start and stop the host server through the wrapper; it also manages the compression-retry worker:
+
+```sh
+./scripts/agentmemory-host.sh              # foreground (default); Ctrl-C stops both
+./scripts/agentmemory-host.sh --background # detach after :3111 is healthy
+./scripts/agentmemory-host.sh stop         # works from any terminal, either mode
+./scripts/agentmemory-host.sh status
+```
+
+The wrapper runs agentmemory from `$HOME/.local/share/agentmemory` with `NODE_OPTIONS=--max-old-space-size=4096`, waits for `:3111`, then starts `scripts/agentmemory-compression-retry.mjs --watch`. The `agentmemory` CLI starts the engine as a daemon and exits, so the wrapper tracks the server by health rather than by the CLI process; in the foreground it prints the startup output, stays attached, and monitors `:3111` until Ctrl-C or `stop`. PID files, logs and retry state live in `~/.local/state/agentmemory-host/` (`server.log`, `retry.log`, `retry-state.json`). Run it on the host, never inside the sandbox, and do not start a second `agentmemory` process next to it.
+
+If the server is still running from the old manual command, retire it once with `./scripts/agentmemory-host.sh stop`, then start it through the wrapper.
+
+The retry worker is needed because agentmemory marks an observation `compression.status = "failed"` after a compression error and never retries it. Failed observations are still stored, indexed and embedded, but they miss the richer compressed form. The worker follows the server's retry cursor (the server stops at the first failure, so one call cannot drain a list), skips a page once all of its failed observations reach the attempt cap, and no-ops while the server, repair proxy, LLM provider or vector backfill is not ready. Its cursor persists, so a backlog resumes across restarts.
+
+Only the server lifecycle is managed by the wrapper. The `agentmemory-ollama-proxy` systemd user unit stays installed and enabled, because compression needs the proxy whether or not the server is running.
+
 ### Local LLM compression (Ollama)
 
 agentmemory v0.9.x keeps LLM features off until a provider is named explicitly: `OPENAI_API_KEY` alone leaves the server in `noop` mode. `agentmemory.env` therefore sets `AGENTMEMORY_LLM_PROVIDER=openai`; `agentmemory status` should report `Provider: ✓ llm`.
@@ -192,7 +213,7 @@ Pointing it straight at Ollama is not enough for reliable compression. agentmemo
 - escapes bare `&` and stray `<`/`>` inside the text-only XML fields (`scripts/agentmemory-xml-repair.mjs`), and
 - keeps only the `<observation>`/`<summary>` root, dropping code fences, think blocks and trailing prose.
 
-`agentmemory.env` sets `OPENAI_BASE_URL=http://127.0.0.1:11435/v1`. `./scripts/sync-config.sh` installs the proxy as a systemd user service: it renders `scripts/agentmemory-ollama-proxy.service` with absolute paths into `~/.config/systemd/user/`, enables and restarts it, and replaces `~/.agentmemory/.env` with this repo's `agentmemory.env` (backing it up to `~/.agentmemory/.env.bak` first). Pass `--skip-agentmemory-env` to leave the host env untouched. The repo file does not contain `AGENTMEMORY_SECRET`; if the server rotates the secret on restart, re-run the sandbox launcher so it refreshes `~/.config/opencode/agentmemory-secret`, or copy the secret back from the backup. Re-run the script after moving the checkout or changing the Node binary.
+`agentmemory.env` sets `OPENAI_BASE_URL=http://127.0.0.1:11435/v1`. `./scripts/sync-config.sh` installs the proxy as a systemd user service: it renders `scripts/agentmemory-ollama-proxy.service` with absolute paths into `~/.config/systemd/user/`, enables and restarts it, and replaces `~/.agentmemory/.env` with this repo's `agentmemory.env` (backing it up to `~/.agentmemory/.env.bak` first). Pass `--skip-agentmemory-env` to leave the host env untouched. The repo file does not contain `AGENTMEMORY_SECRET`; agentmemory keeps its generated secret in `~/.agentmemory/secret`, outside `.env`, so replacing the env does not rotate it. Deleting that file does; after that, re-run the sandbox launcher so `~/.config/opencode/agentmemory-secret` is refreshed. Re-run the script after moving the checkout or changing the Node binary.
 
 The same env also enables semantic recall: `EMBEDDING_PROVIDER=openai` with `qwen3-embedding:0.6b` (1024 dims, 100+ languages, 32K tokens) through the proxy. `sync-config.sh` pulls that model when missing, checks its embeddings endpoint and verifies the vector width matches `OPENAI_EMBEDDING_DIMENSIONS`. `AGENTMEMORY_VECTOR_BACKFILL=all` with a `AGENTMEMORY_VECTOR_BACKFILL_MAX` above the store size re-embeds everything in one start. Without it, recall is BM25 keyword-only. Changing the embedding model or width makes the existing vectors stale: set `AGENTMEMORY_DROP_STALE_INDEX=true` once to discard and rebuild them.
 
@@ -201,7 +222,8 @@ Verify both layers, then restart agentmemory if the env changed:
 ```sh
 systemctl --user status agentmemory-ollama-proxy --no-pager
 curl -s http://127.0.0.1:11435/api/version
-agentmemory stop && agentmemory
+./scripts/agentmemory-host.sh stop
+./scripts/agentmemory-host.sh
 ```
 
 If the systemd user manager is unavailable, run the proxy directly:
@@ -214,7 +236,7 @@ The proxy only rewrites `POST .../chat/completions`; every other path and method
 
 ### API secret
 
-agentmemory v0.9.32 authenticates its REST API. On every launch, the launcher resolves the host secret (`AGENTMEMORY_SECRET` from the environment, else from `~/.agentmemory/.env`, else from `~/.agentmemory/secret`) and writes it to `~/.config/opencode/agentmemory-secret` (mode 0600), inside the read-only host config mount. The image's persistent shell block exports it from there at shell start-up so the MCP client and the capture plugin can authenticate. If you rotate the secret, re-run the launcher and restart the sandbox.
+agentmemory v0.9.32 authenticates its REST API. On first start it generates a 32-byte random secret and writes it to `~/.agentmemory/secret` (mode 0600); that file, not `~/.agentmemory/.env`, is the normal source. On every launch, the launcher resolves the host secret (`AGENTMEMORY_SECRET` from the environment, else from `~/.agentmemory/.env`, else from `~/.agentmemory/secret`) and writes it to `~/.config/opencode/agentmemory-secret` (mode 0600), inside the read-only host config mount. The image's persistent shell block exports it from there at shell start-up so the MCP client, the capture plugin and the compression-retry worker can authenticate. Deleting `~/.agentmemory/secret` rotates the secret; re-run the launcher and restart the sandbox after that.
 
 ### Hidden agentmemory tools
 
@@ -230,9 +252,11 @@ agentmemory advertises its full tool set regardless of which features are enable
 | Sandbox cannot reach `172.17.0.1:11434`/`:8080` | A host network preset can deny the gateway even though the kit allowlists it. Allow it for this sandbox (`sbx policy allow network --sandbox <name> 172.17.0.1:11434,172.17.0.1:8080`) or switch those `baseURL`s to `http://host.docker.internal:<port>/v1` (the kit allows `localhost:11434`/`localhost:8080`; `host.docker.internal` does not resolve on the host). |
 | Config edits don't show up in the sandbox | Run `./scripts/sync-config.sh` and restart OpenCode. For `opencode-sandbox.yaml` or `opencode-sandbox.dockerfile` changes, recreate the sandbox: `sbx rm <name>`, then relaunch. `agentmemory.env` changes need only a host agentmemory restart (see the next row). |
 | `agentmemory.env` changes don't take effect | agentmemory runs on the host, not in the sandbox: run `./scripts/sync-config.sh` (it replaces `~/.agentmemory/.env`), then restart the host agentmemory server. No sandbox rebuild is needed. |
-| agentmemory tools missing or reduced | The host server is unreachable; start it or keep working, explicit saves stay sandbox-local (see [agentmemory is optional](#agentmemory-is-optional)). |
-| `agentmemory status` says `Provider: noop (LLM features off)` | Run `./scripts/sync-config.sh` (it replaces `~/.agentmemory/.env` from `agentmemory.env`), then restart agentmemory. A provider key alone does not enable LLM features. |
-| Compression stays `raw`, or logs `parse_failed` | The repair proxy is not running or `OPENAI_BASE_URL` does not point at it. Check `curl -s http://127.0.0.1:11435/api/version`, then restart agentmemory. See [Local LLM compression](#local-llm-compression-ollama). |
+| agentmemory tools missing or reduced | The host server is unreachable; start it with `./scripts/agentmemory-host.sh` or keep working, explicit saves stay sandbox-local (see [agentmemory is optional](#agentmemory-is-optional)). |
+| `agentmemory-host.sh` says the server is already running but was not started by the wrapper | Run `./scripts/agentmemory-host.sh stop` once (it calls `agentmemory stop`), then start through the wrapper. |
+| `agentmemory status` says `Provider: noop (LLM features off)` | Run `./scripts/sync-config.sh` (it replaces `~/.agentmemory/.env` from `agentmemory.env`), then restart the server through the wrapper. A provider key alone does not enable LLM features. |
+| Compression stays `raw`, or logs `parse_failed` | The repair proxy is not running or `OPENAI_BASE_URL` does not point at it. Check `curl -s http://127.0.0.1:11435/api/version`, then restart the server through the wrapper. See [Local LLM compression](#local-llm-compression-ollama). |
+| Some observations stay uncompressed after a failure | agentmemory does not retry them itself. The wrapper's worker retries them while the server runs; check `~/.local/state/agentmemory-host/retry.log`. If the server was started outside the wrapper, run `node scripts/agentmemory-compression-retry.mjs --once` on the host for an immediate pass. Failed observations are still stored, indexed and embedded. |
 | `sync-config.sh` fails with `~/.config/systemd/user/agentmemory-ollama-proxy.service: Permission denied` | The unit file is root-owned (usually from an earlier `sudo` run). The script now replaces it via a temp file + rename when the directory is writable. If the directory itself is root-owned, run `sudo chown -R "$USER:$USER" ~/.config/systemd/user`, then re-run the script. |
 | OpenCode Console/Go asks for `/connect` or shows unauthenticated | The custom secret was added after this sandbox was created, so `OPENCODE_API_KEY` is unset. Recreate the sandbox (`sbx rm <name>`, then relaunch) and do not run `/connect`; see [OpenCode (Console) access](#opencode-console-access). |
 | `opencode-sandbox.yaml` sanity check | From this directory: `sbx kit inspect . --kit-arg home="$HOME"`, or `sbx kit validate --kit-arg home="$HOME" .`; v3 source validation may require the build. |
