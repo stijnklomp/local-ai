@@ -49,21 +49,10 @@ else
   rm -f "$SECRET_FILE"
 fi
 
-# sbx mounts the shared skills store automatically only for its built-in agents.
-# This v2 custom kit cannot declare the v3 `agent-skills` capability, so mount
-# the store read-only at its host path and tell the kit where to find it. The
-# marker file lives in the read-only config mount; the kit reads it at startup.
-SKILLS_STORE="${XDG_STATE_HOME:-$HOME/.local/state}/sandboxes/sandboxes/agent-skills"
-SKILLS_STORE_FILE="$HOME/.config/opencode/skills-store"
-SKILLS_MOUNT=()
-if [ -d "$SKILLS_STORE" ]; then
-  printf '%s\n' "$SKILLS_STORE" > "$SKILLS_STORE_FILE"
-  SKILLS_MOUNT=("$SKILLS_STORE:ro")
-  echo "skills: shared store available at $SKILLS_STORE."
-else
-  rm -f "$SKILLS_STORE_FILE"
-  echo "skills: no shared store at $SKILLS_STORE (optional; install with 'sbx skills add <repository>')." >&2
-fi
+# The kit declares the `agent-skills@1` capability, so the runtime mounts the
+# sbx shared skill store itself. The host config is still passed as an extra
+# read-only workspace below. Drop the marker written by the old v2 launcher.
+rm -f "$HOME/.config/opencode/skills-store"
 
 AUTH_HEADER=()
 if [ -n "$SECRET" ]; then
@@ -93,13 +82,12 @@ if sbx ls -q | grep -Fxq "$SANDBOX_NAME"; then
   echo "sandbox: attaching to existing sandbox \"$SANDBOX_NAME\"."
   exec sbx run --name "$SANDBOX_NAME" -- --auto
 else
-  echo "sandbox: creating sandbox \"$SANDBOX_NAME\" (first run pulls the image and boots the VM, may take a few minutes)."
+  echo "sandbox: creating sandbox \"$SANDBOX_NAME\" (first run pulls the image, boots the VM and builds the kit, which can take minutes)."
   exec sbx run \
     --name "$SANDBOX_NAME" \
     --kit-arg "home=$HOME" \
     "$REPO_DIR" \
     . \
     "$HOME/.config/opencode:ro" \
-    "${SKILLS_MOUNT[@]}" \
     -- --auto
 fi

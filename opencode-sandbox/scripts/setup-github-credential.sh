@@ -4,7 +4,7 @@ set -euo pipefail
 # Approves the GitHub service credential for the opencode-agentmemory kit and
 # reports what is left to do. Run on the host, never inside the sandbox.
 #
-# The kit is third-party (it extends the built-in `opencode` kit), so sbx
+# The kit is a third-party v3 kit, so sbx
 # withholds inherited credentials until a binding approves them. Without the
 # `github` binding below, sandboxes start with the credential silently
 # withheld and `gh` inside them reports the sentinel token as invalid.

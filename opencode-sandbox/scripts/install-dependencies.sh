@@ -9,8 +9,8 @@ set -euo pipefail
 # Written and tested on Debian 13. Docker supports local sandboxes on
 # Ubuntu 24.04+; other Debian-family systems usually work but are untested.
 
-AGENTMEMORY_VERSION="0.9.30"
-DOCKER_SANDBOX_VERSION="0.48.0"
+AGENTMEMORY_VERSION="0.9.32"
+DOCKER_SANDBOX_VERSION="0.51.0"
 
 SKIP_DOCKER_SANDBOX=false
 SKIP_AGENTMEMORY=false
@@ -55,8 +55,8 @@ if [ "$SKIP_DOCKER_SANDBOX" = false ]; then
 
   SBX_ARCH="$(dpkg --print-architecture)"
   case "$SBX_ARCH" in
-    amd64) SBX_SHA256="ba972487a0625ca87c2230a65c83a2f7177f97930a74b69c310c1106232c0388" ;;
-    arm64) SBX_SHA256="5824039bc796dcf54a46d50191395f0ac16d712f3ba6d5142bdcbe8a41410b68" ;;
+    amd64) SBX_SHA256="a0dcfdbd03e1df885c3b126814fc4f7aa518baf1ba0d3f0419b9e6a94a5616d1" ;;
+    arm64) SBX_SHA256="80b7eaa6aabb138dc0b9c3cd1be6920d01ec7035ff84b5fe0a9f2586eabd3127" ;;
     *)
       echo "Error: unsupported architecture \"$SBX_ARCH\"; Docker Sandboxes publishes amd64 and arm64." >&2
       exit 1

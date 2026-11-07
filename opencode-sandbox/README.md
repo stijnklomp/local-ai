@@ -1,6 +1,6 @@
 # OpenCode Sandbox
 
-OpenCode 2 running in a Docker Sandbox (`sbx`), with optional persistent agent memory powered by agentmemory.
+OpenCode 2 running in a Docker Sandbox (`sbx`) from a schema v3 workload kit, with optional persistent agent memory powered by agentmemory.
 
 ## What to run
 
@@ -8,11 +8,11 @@ One-time host setup, from this directory:
 
 | Step | Command | Notes |
 | ---- | ------- | ----- |
-| 1 | `./scripts/install-dependencies.sh` | Installs sbx 0.48.0 (SHA-256 verified) and agentmemory 0.9.30, and checks KVM. Calls sudo itself; do not run it with sudo. Flags: `--skip-docker-sandbox`, `--skip-agentmemory`. |
+| 1 | `./scripts/install-dependencies.sh` | Installs sbx 0.51.0 (SHA-256 verified) and agentmemory 0.9.32, and checks KVM. Calls sudo itself; do not run it with sudo. Flags: `--skip-docker-sandbox`, `--skip-agentmemory`. |
 | 2 | `sbx login` | One-time Docker OAuth sign-in; `sbx run` needs it. |
 | 3 | `cp agentmemory.env ~/.agentmemory/.env` | Host agentmemory configuration. Optional; skip if you don't want memory on this machine. |
 | 4 | `./scripts/sync-config.sh` | Copies this repo's OpenCode config into `~/.config/opencode`. Required before the first launch. |
-| 5 | `sbx skills add mattpocock/skills` | Optional: installs [mattpocock/skills](https://github.com/mattpocock/skills) into the sbx shared skill store. The launcher mounts the store and the kit links its entries into OpenCode at the next sandbox start; recreate a sandbox created before this mount existed. See [Skills](#skills). |
+| 5 | `sbx skills add mattpocock/skills` | Optional: installs [mattpocock/skills](https://github.com/mattpocock/skills) into the sbx shared skill store. The kit's `agent-skills@1` capability makes the runtime mount the store into OpenCode's global skills path at the next sandbox start. See [Skills](#skills). |
 | 6 | `./scripts/setup-github-credential.sh` | Optional: approves the `github` credential for this kit and checks for a stored PAT (`sbx secret set github`); needed before sandboxed `gh` can act on GitHub. See [GitHub access](#github-access). |
 | 7 | `sbx secret set-custom --host opencode.ai --env OPENCODE_API_KEY` | Optional: OpenCode (Console) PAT for the default `opencode-go` provider. Set it before the first launch. See [OpenCode (Console) access](#opencode-console-access). |
 
@@ -27,17 +27,19 @@ After changing files in this repo:
 | Changed | Do |
 | ------- | -- |
 | `opencode.json`, `global-AGENTS.md`, `plugins/`, `commands/` | `./scripts/sync-config.sh`, then restart OpenCode inside the sandbox |
-| Skills in the sbx shared store | manage them on the host with `sbx skills add` / `sbx skills update`; new entries appear at the next sandbox start, updated contents at the next OpenCode session. The launcher mounts the store, so recreate sandboxes created before that mount existed |
-| Your own skills in `~/.config/opencode/skills` | edit them on the host; the kit relinks them at the next sandbox start (only subdirectories with a `SKILL.md` are linked) |
+| Skills in the sbx shared store | manage them on the host with `sbx skills add` / `sbx skills update`; new entries appear at the next sandbox start, updated contents at the next OpenCode session |
+| Your own skills in `~/.config/opencode/skills` | edit them on the host; they are read live from the read-only host mount through the `skills` config field |
 | the GitHub binding or sbx credential state | re-run `./scripts/setup-github-credential.sh`; restart sandboxes that started before the change (`sbx stop <name>`) |
-| `spec.yaml`, `agentmemory.env` | Remove the sandbox (`sbx rm <name>`) and relaunch |
+| `opencode-sandbox.yaml`, `opencode-sandbox.dockerfile` | Remove the sandbox (`sbx rm <name>`) and relaunch |
+| `agentmemory.env` | Restart the host agentmemory server; the sandbox reads only the secret written by the launcher, so no sandbox rebuild is needed |
+| An existing sandbox created with the v2 kit | v2 sandboxes cannot be updated in place: `sbx rm <name>`, then relaunch once |
 
-`spec.yaml` is applied only when a sandbox is created. `./scripts/sync-config.sh` runs on the host only, never inside the sandbox.
+The kit is built and applied only when a sandbox is created. `./scripts/sync-config.sh` runs on the host only, never inside the sandbox.
 
 ## Install details
 
 - Written for Debian-family Linux, tested on Debian 13. Docker officially supports Ubuntu 24.04+; the pinned `ubuntu2404` package also runs on Debian, but other distributions are untested.
-- The script detects `amd64`/`arm64`, skips the download when a new-enough `sbx` is already installed, and otherwise verifies the release artifact against a pinned SHA-256 before installing it.
+- The script detects `amd64`/`arm64`, skips the download when `sbx` 0.51.0 or newer is already installed, and otherwise verifies the release artifact against a pinned SHA-256 before installing it.
 - Local sandboxes need KVM. The script adds you to the `kvm` group when needed; sign out and back in (or run `newgrp kvm`) afterwards. Inside a VM, nested virtualization must be enabled.
 
 ## Running OpenCode
@@ -50,7 +52,7 @@ local-ai/opencode-sandbox/scripts/run-opencode-in-docker-sandbox.sh
 
 - The launcher derives the sandbox name from the project directory name: lowercased, invalid characters replaced by hyphens, truncated to 63 characters (`/home/me/My App` → `my-app`). Two projects with the same sanitized directory name share one sandbox; rename one of the directories if that is a problem.
 - It resolves the agentmemory secret, writes `~/.config/opencode/agentmemory-secret` (mode 0600), and health-checks the host agentmemory server on `:3111`. A missing or unreachable agentmemory only prints a note; the sandbox still starts.
-- The first run pulls the image, boots the VM and runs the kit setup (installs OpenCode 2.0.29 and agentmemory 0.9.30), which takes minutes. Later runs attach to the existing sandbox with the same name.
+- The first run pulls the base image, boots the VM and builds the kit, which installs OpenCode 2.2.6 and agentmemory 0.9.32 into the image, so it takes minutes. Later runs attach to the existing sandbox with the same name.
 - The launcher passes `--kit-arg home="$HOME"` when it creates a sandbox, so the kit config adapts to the host user. Always use the launcher instead of calling `sbx run` on the kit directory directly.
 - The launcher starts OpenCode with `--auto` (`sbx run ... -- --auto`), so the sandboxed agent auto-approves every permission that is not explicitly denied and works without confirmation prompts. `deny` rules in `opencode.json` still apply; the sandbox itself is the safety boundary that makes unattended execution safe.
 
@@ -66,12 +68,10 @@ It copies `opencode.json`, `global-AGENTS.md` (as `AGENTS.md`), `plugins/` and `
 
 ### Skills
 
-Agent skills come from two places, both exposed through `/home/agent/.config/opencode/skills`, the global path OpenCode 2 scans:
+Agent skills come from two places:
 
-- Repository skills in the sbx shared store, installed with `sbx skills add`.
-- Your own skills under `~/.config/opencode/skills` on the host.
-
-`sbx` mounts the shared store automatically only for its built-in agents. This is a v2 custom kit, which cannot declare the v3 `agent-skills` capability, so the launcher mounts the store read-only at its host path (`${XDG_STATE_HOME:-~/.local/state}/sandboxes/sandboxes/agent-skills`) and records that path in `~/.config/opencode/skills-store`. The kit links each store entry, and each of your custom skill directories containing a `SKILL.md`, into the sandbox skills directory on every start. A host skill with the same directory name wins over a store entry.
+- Repository skills in the sbx shared store, installed with `sbx skills add`. The kit declares the `agent-skills@1` capability, so the runtime mounts the store at `/home/agent/.config/opencode/skills`, the global path OpenCode 2 scans.
+- Your own skills under `~/.config/opencode/skills` on the host. The host config directory is mounted read-only, and `opencode.json` loads them through the `skills` config field.
 
 Install the mattpocock skills on the host:
 
@@ -82,11 +82,11 @@ sbx skills ls
 
 - `sbx skills add` installs every `SKILL.md` it discovers. For `mattpocock/skills` that includes the `in-progress/` and `misc/` buckets; pass `--skill <name>` (repeatable or comma-separated) to install a subset.
 - Update repository-installed skills with `sbx skills update` (optionally with skill names).
-- Your own host skills are linked directly, so they do not need `sbx skills import`. Import is only for copying them into the shared store for other agents or sandboxes; an import replaces the store entry with a copy, so `sbx skills update` no longer manages it.
-- The store mount is read-only and fixed when the sandbox is created. Recreate an existing sandbox once (`sbx rm <name>`, then relaunch) after pulling a change to the launcher or kit; otherwise it keeps its original mounts.
-- New store entries reach a running sandbox only at its next start (`sbx stop <name>`, then relaunch). Updated contents are live through the link, but OpenCode may scan skills only at session start, so start a new session. Removed entries disappear at the next start.
+- Your own host skills are read from the read-only host mount through the `skills` config field, so edits are live. They do not need `sbx skills import`. Import is optional: it copies them into the shared store for other agents or sandboxes, and an import replaces the store entry with a copy, so `sbx skills update` no longer manages it.
+- The shared store and your own directory are separate sources now. If the same skill exists in both, keep one copy to avoid duplicate entries.
+- New store entries reach a running sandbox only at its next start (`sbx stop <name>`, then relaunch). Updated contents are live through the links, but OpenCode may scan skills only at session start, so start a new session. Removed entries disappear at the next start.
 - The shared store is experimental and `sbx reset` clears it.
-- If you used the removed `./scripts/install-skills.sh`, delete `~/.config/opencode/vendor/mattpocock-skills` and the copied `engineering/` and `productivity/` directories under `~/.config/opencode/skills`. They are no longer used, and the category directories would not be linked because they contain no top-level `SKILL.md`.
+- If you used the removed `./scripts/install-skills.sh`, delete `~/.config/opencode/vendor/mattpocock-skills` and the copied `engineering/` and `productivity/` directories under `~/.config/opencode/skills`. They are no longer used, and the category directories would not be loaded because they contain no top-level `SKILL.md`.
 - Skills marked `disable-model-invocation: true` upstream (for example `grill-me`) stay hidden from the model's skill list. Invoke them manually with the `/skills` picker (it inserts `@grill-me` into the prompt), or mention `@grill-me` directly; model-invoked skills are advertised automatically.
 - Run `@setup-matt-pocock-skills` once per project repo before using the engineering skills; it records the issue tracker, triage labels and domain-doc layout in that repo.
 
@@ -101,13 +101,13 @@ EOF
 chmod 600 ~/.config/opencode/websearch.env
 ```
 
-One `VAR=value` per line; the built-in providers use `TAVILY_API_KEY`, `EXA_API_KEY`, `FIRECRAWL_API_KEY`, `PARALLEL_API_KEY` and `TINYFISH_API_KEY`. The kit exports the file into the sandbox environment at shell start-up, and its network allowlist covers all provider domains so `websearch.provider: "random"` can fail over between them. Both the export step and the domains are part of `spec.yaml` and therefore apply only at sandbox creation: recreate an existing sandbox once (`sbx rm <name>`, then relaunch) to pick them up; afterwards, editing `websearch.env` needs only a restart of OpenCode. The file lives outside the repo, is ignored by `sync-config.sh` and is never committed. `/connect` in the TUI is an alternative that stores a key inside the sandbox.
+One `VAR=value` per line; the built-in providers use `TAVILY_API_KEY`, `EXA_API_KEY`, `FIRECRAWL_API_KEY`, `PARALLEL_API_KEY` and `TINYFISH_API_KEY`. The image exports the file into the sandbox environment at shell start-up, and the kit's network allowlist covers all provider domains so `websearch.provider: "random"` can fail over between them. The export block lives in `opencode-sandbox.dockerfile` and the domains in `opencode-sandbox.yaml`, so changing either needs a new sandbox (`sbx rm <name>`, then relaunch); editing `websearch.env` itself needs only a restart of OpenCode. The file lives outside the repo, is ignored by `sync-config.sh` and is never committed. `/connect` in the TUI is an alternative that stores a key inside the sandbox.
 
 ### GitHub access
 
-Inside the sandbox `GH_TOKEN` is a sentinel value; the host-side proxy replaces it with a real credential on requests to `api.github.com`, `github.com`, `raw.githubusercontent.com` and related domains. Two host-side pieces are needed:
+Inside the sandbox `GH_TOKEN` is a sentinel value; the host-side proxy replaces it with a real credential on requests to `api.github.com` and `github.com`, the domains this kit declares. Two host-side pieces are needed:
 
-1. **An approved credential binding.** This kit extends the built-in `opencode` kit but is itself third-party, so sbx withholds the `github` credential until a binding approves it — without one, sandboxes start with the credential silently withheld and `gh` reports the sentinel token as invalid. `./scripts/setup-github-credential.sh` writes the binding idempotently, merging with any existing entries in `~/.config/sbx/credentials.yaml`:
+1. **An approved credential binding.** This is a third-party kit, so sbx withholds the `github` credential until a binding approves it — without one, sandboxes start with the credential silently withheld and `gh` reports the sentinel token as invalid. `./scripts/setup-github-credential.sh` writes the binding idempotently, merging with any existing entries in `~/.config/sbx/credentials.yaml`:
 
 ```sh
 ./scripts/setup-github-credential.sh
@@ -129,7 +129,7 @@ sbx exec <name> gh api user --jq .login
 
 Inside the sandbox `gh` reports the sentinel as a `gho_...` token with `Token scopes: none` — that is expected for a fine-grained PAT behind the proxy. Rotating the PAT is re-running the `secret set` command; the token itself never enters the sandbox. `sbx reset` deletes stored secrets, so re-check afterwards.
 
-Pushing stays on the host by design: `opencode.json` denies `git push` through explicit shell rules after the allow catch-all, the stored PAT has no write scope, and no GitHub SSH key is made available to the sandbox. Push manually from the host. (SSH agent forwarding is on by default in sbx; `sbx settings set ssh.agentForwardingEnabled false` plus `sbx daemon restart` closes that path host-side too.)
+Pushing stays on the host by design: `opencode.json` denies `git push` through explicit shell rules after the allow catch-all, the stored PAT has no write scope, and the kit does not declare `ssh-agent@1`, so v3 forwards no SSH agent into the sandbox. HTTPS is the supported path. Push manually from the host.
 
 ### OpenCode (Console) access
 
@@ -159,14 +159,14 @@ Custom secrets apply only to sandboxes created after they are stored. Recreate a
 ### OpenCode 2 specifics
 
 - `opencode.json` uses the native OpenCode 2 format: `providers`, `mcp.servers`, an ordered `permissions` array, `policies` (provider allowlist) and `update: "disable"`. OpenCode 2 still normalizes the v1 shapes, but this repo keeps the native format. Do not point an OpenCode 1 installation at this config; keep v1 usage on a separate config file.
-- The sandbox image ships OpenCode 1; the kit setup replaces it with the pinned OpenCode 2 CLI (`@opencode/cli` 2.0.29, pinned in `spec.yaml`). OpenCode 2 is distributed separately from OpenCode 1: GitHub Releases only lists 1.x, and `npm install -g @opencode/cli` is the v2 package.
-- OpenCode 2 ignores the `instructions` config field. Global instructions live in `global-AGENTS.md`, which syncs to `~/.config/opencode/AGENTS.md` (OpenCode 2 discovers that file globally). The kit symlinks it into the sandbox home config directory.
+- The sandbox image bakes in the pinned OpenCode 2 CLI and agentmemory (`@opencode/cli` 2.2.6 and `@agentmemory/agentmemory` 0.9.32, pinned in `opencode-sandbox.yaml`) at build time; there are no create-time npm installs. OpenCode 2 is distributed separately from OpenCode 1: `@opencode/cli` is the v2 package, while `opencode-ai` is v1.
+- The image's persistent shell block sets `OPENCODE_CONFIG` to the host `opencode.json`; OpenCode's writable config directory stays at `/home/agent/.config/opencode`. The config loads the host global `AGENTS.md` through the `instructions` field (`{env:OPENCODE_SANDBOX_HOST_HOME}/.config/opencode/AGENTS.md`) and host custom skills through the `skills` field (`{env:OPENCODE_SANDBOX_HOST_HOME}/.config/opencode/skills`). The kit's `agent-context@2` capability writes a separate sandbox-only `AGENTS.md` at `/home/agent/.config/opencode/AGENTS.md`.
 - Credentials live in the server's SQLite database (`~/.local/share/opencode/opencode.db`); the legacy `auth.json` is imported only during the V1-to-V2 migration. The OpenCode Console key therefore arrives as the `OPENCODE_API_KEY` environment connection (see [OpenCode (Console) access](#opencode-console-access)), not as an auth file.
-- OpenCode 1 plugin implementations do not run in OpenCode 2. `plugins/agentmemory-capture.ts` is written against the OpenCode 2 plugin API (`@opencode/plugin` 2.0.29) and is loaded from the global `~/.config/opencode/plugins/` directory.
+- OpenCode 1 plugin implementations do not run in OpenCode 2. `plugins/agentmemory-capture.ts` is written against the OpenCode 2 plugin API (`@opencode/plugin` 2.2.6) and is loaded from the global `~/.config/opencode/plugins/` directory.
 - The agentmemory MCP server sets `codemode: false` so its tools stay on the model's native tool list as `agentmemory_memory_*`; `/recall` and `/remember` and the tool deny rules depend on those names.
 - `websearch.provider` is pinned to `"random"`, so the first search in a fresh sandbox does not stop to ask which search provider to use. In `random` mode OpenCode keeps one provider per session and retries with another available provider when one returns HTTP 429 — this automatic failover exists only in `random` mode, so pinning a provider ID (`exa`, `firecrawl`, `parallel`, `tavily`, `tinyfish`) means a rate-limited provider keeps failing until its quota resets. Remove the key to get the selection prompt back; provider keys are covered in [Websearch provider keys](#websearch-provider-keys).
 - Project-local skills can be added with the `skills` config field; see `examples/opencode_project_skills_path_example.json`.
-- Capture mapping changed with the v2 event stream: sessions start/end from `session.created`/`session.deleted`, idle summarization from `session.status`/`session.idle`, compaction from `session.compaction.*`, assistant steps from `session.step.ended`, reasoning from `session.reasoning.ended`, permission prompts from `permission.asked`/`permission.replied`, and file changes from `filesystem.changed`. Tool calls, prompts, model params and compaction enrichment are captured through plugin hooks (`prompt`, `context`, `compaction`, `tool.execute.before`/`after`). The v1-only `command.executed` observation has no v2 equivalent; todo updates are captured as `todowrite` tool calls.
+- The capture plugin is written against the 2.2.6 plugin API. It subscribes to session lifecycle, permission and filesystem events and registers prompt, context, compaction and tool-execute hooks to feed agentmemory; the v1-only `command.executed` observation has no v2 equivalent.
 
 ## Local models
 
@@ -174,7 +174,7 @@ The Ollama setup, firewall rules and model instructions live in [`../local-model
 
 - `opencode.json` reaches host model servers through the Docker bridge gateway (`172.17.0.1:11434` for Ollama, `172.17.0.1:8080` for llama-server), so the same config works on the host and in the sandbox. This is why those servers must listen on `0.0.0.0` and why the host firewall must allow the bridge subnet.
 - The sandbox proxies all TCP traffic. With the sbx **Open** network preset this works out of the box; with **Balanced** or **Locked Down** (deny by default) the gateway may be blocked. See [Troubleshooting](#troubleshooting) for both fixes.
-- `spec.yaml` allowlists `localhost:11434` and `localhost:8080`, so the `host.docker.internal` route works under any preset.
+- `opencode-sandbox.yaml` allowlists `localhost:11434`/`:8080` and the bridge gateway `172.17.0.1:11434`/`:8080`, so both routes are available when the host network preset permits them.
 
 ## agentmemory
 
@@ -184,7 +184,7 @@ agentmemory does not have to be running to use the sandbox. If the host health c
 
 ### API secret
 
-agentmemory v0.9.30 authenticates its REST API. On every launch, the launcher resolves the host secret (`AGENTMEMORY_SECRET` from the environment, else from `~/.agentmemory/.env`, else from `~/.agentmemory/secret`) and writes it to `~/.config/opencode/agentmemory-secret` (mode 0600, inside the read-only mount). The sandbox exports it from there at startup so the MCP client and the capture plugin can authenticate. If you rotate the secret, re-run the launcher and restart the sandbox.
+agentmemory v0.9.32 authenticates its REST API. On every launch, the launcher resolves the host secret (`AGENTMEMORY_SECRET` from the environment, else from `~/.agentmemory/.env`, else from `~/.agentmemory/secret`) and writes it to `~/.config/opencode/agentmemory-secret` (mode 0600), inside the read-only host config mount. The image's persistent shell block exports it from there at shell start-up so the MCP client and the capture plugin can authenticate. If you rotate the secret, re-run the launcher and restart the sandbox.
 
 ### Hidden agentmemory tools
 
@@ -197,13 +197,14 @@ agentmemory advertises its full tool set regardless of which features are enable
 | `sbx: command not found` | Run `./scripts/install-dependencies.sh`. |
 | Launcher says `~/.config/opencode does not exist` | Run `./scripts/sync-config.sh`. |
 | KVM error when starting a sandbox | Enable hardware virtualization in the BIOS/UEFI (and nested virtualization when inside a VM); check `lsmod \| grep kvm` and that your user is in the `kvm` group (`newgrp kvm` after a group change). |
-| Sandbox cannot reach `172.17.0.1:11434`/`:8080` | Your sbx network preset denies the gateway. Allow it for this sandbox (`sbx policy allow network --sandbox <name> 172.17.0.1:11434,172.17.0.1:8080`) or switch those `baseURL`s to `http://host.docker.internal:<port>/v1` (the kit allows `localhost:11434`/`localhost:8080`; `host.docker.internal` does not resolve on the host). |
-| Config edits don't show up in the sandbox | Run `./scripts/sync-config.sh` and restart OpenCode. For `spec.yaml` or `agentmemory.env` changes, recreate the sandbox: `sbx rm <name>`, then relaunch. |
+| Sandbox cannot reach `172.17.0.1:11434`/`:8080` | A host network preset can deny the gateway even though the kit allowlists it. Allow it for this sandbox (`sbx policy allow network --sandbox <name> 172.17.0.1:11434,172.17.0.1:8080`) or switch those `baseURL`s to `http://host.docker.internal:<port>/v1` (the kit allows `localhost:11434`/`localhost:8080`; `host.docker.internal` does not resolve on the host). |
+| Config edits don't show up in the sandbox | Run `./scripts/sync-config.sh` and restart OpenCode. For `opencode-sandbox.yaml`, `opencode-sandbox.dockerfile` or `agentmemory.env` changes, recreate the sandbox: `sbx rm <name>`, then relaunch. |
 | agentmemory tools missing or reduced | The host server is unreachable; start it or keep working, explicit saves stay sandbox-local (see [agentmemory is optional](#agentmemory-is-optional)). |
 | OpenCode Console/Go asks for `/connect` or shows unauthenticated | The custom secret was added after this sandbox was created, so `OPENCODE_API_KEY` is unset. Recreate the sandbox (`sbx rm <name>`, then relaunch) and do not run `/connect`; see [OpenCode (Console) access](#opencode-console-access). |
-| `spec.yaml` sanity check | `sbx kit validate --kit-arg "home=$HOME" .` from this directory. |
+| `opencode-sandbox.yaml` sanity check | From this directory: `sbx kit inspect . --kit-arg home="$HOME"`, or `sbx kit validate --kit-arg home="$HOME" .`; v3 source validation may require the build. |
 | Agent asks for approval before a command or edit | Launch via the launcher, which passes `--auto`; direct `sbx run`/dashboard attaches skip the flag. Anything hit by an explicit `deny` in `opencode.json` is blocked rather than prompted. |
 | First search asks which provider to use | `./scripts/sync-config.sh` (the config pins `websearch.provider: "random"`) and restart OpenCode. |
 | `gh auth status` says the token is invalid | No stored credential or no approved binding: run `./scripts/setup-github-credential.sh`, then store a PAT with `sbx secret set github` (see [GitHub access](#github-access)). |
 | `gh` works in one sandbox but not another after adding the secret | The binding is evaluated at sandbox start; restart that sandbox: `sbx stop <name>`, then `sbx exec <name> gh auth status`. |
 | `git push` is denied inside the sandbox | By design; pushes are reserved for the host (see [GitHub access](#github-access)). |
+| Sandbox was created with the old v2 kit | v2 sandboxes cannot be updated in place: `sbx rm <name>`, then relaunch once. |

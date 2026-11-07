@@ -1,0 +1,143 @@
+# syntax=docker/sandbox-kit:3
+# yaml-language-server: $schema=https://raw.githubusercontent.com/docker/sandbox-kit-spec/main/schema/kit.schema.json
+# OpenCode 2 as a WORKLOAD. The image is built from Docker's published shell
+# workload (platform floor, Node, Docker, gh), with the pinned OpenCode 2 CLI
+# and agentmemory client baked in. The launcher mounts the host
+# ~/.config/opencode directory read-only at the same absolute path, so config,
+# plugins, commands and custom skills stay editable on the host.
+schemaVersion: "3"
+kind: workload
+displayName: OpenCode + agentmemory
+description: >-
+  OpenCode 2 with the agentmemory MCP connected to the host agentmemory server.
+  The host opencode config, plugins, commands and custom skills are mounted
+  read-only by the launcher; repository skills installed with sbx skills add
+  are mounted from the sbx shared store through the agent-skills capability.
+  Launch it via scripts/run-opencode-in-docker-sandbox.sh, which supplies the
+  required home argument.
+version: "1.0.0"
+licenses: [MIT]
+
+args:
+  home:
+    required: true
+    env: OPENCODE_SANDBOX_HOST_HOME
+    description: >-
+      Absolute path of the host user's home directory. The launcher passes
+      --kit-arg home="$HOME". The host's ~/.config/opencode directory is
+      mounted at the same absolute path inside the sandbox.
+  version:
+    default: "2.2.6"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: OpenCode 2 CLI release to install
+    buildArg: OPENCODE_VERSION
+  agentmemoryVersion:
+    default: "0.9.32"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: agentmemory MCP client release to install
+    buildArg: AGENTMEMORY_VERSION
+
+provides:
+  - opencode@${{ kit.args.version }}
+  - agentmemory@${{ kit.args.agentmemoryVersion }}
+
+capabilities:
+  # The host launches the agent with the identity the image config declares.
+  - type: com.docker.sandbox/sbx@1
+
+  # Split by phase: the image build fetches packages on the builder's network,
+  # so only the agent's steady-state egress is declared here. Every credential
+  # inject domain must also appear in this runtime allow list.
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      runtime:
+        allow:
+          # OpenCode plugins, MCP servers and LSP helpers install at runtime.
+          - registry.npmjs.org
+          - "*.npmjs.org"
+          # OpenCode Console/Go and model metadata.
+          - opencode.ai:443
+          - "*.opencode.ai:443"
+          # Built-in websearch providers. provider "random" fails over on
+          # rate limits, so every provider must be reachable.
+          - api.tavily.com:443
+          - mcp.exa.ai:443
+          - mcp.firecrawl.dev:443
+          - search.parallel.ai:443
+          - agent.tinyfish.ai:443
+          # gh and git.
+          - api.github.com:443
+          - github.com:443
+          - uploads.github.com:443
+          - raw.githubusercontent.com:443
+          - codeload.github.com:443
+          - "*.githubusercontent.com:443"
+          # Configured OpenRouter provider.
+          - openrouter.ai:443
+          # Host agentmemory and model servers. The sbx proxy translates
+          # host.docker.internal to localhost on the host; allow that route
+          # and the bridge gateway the opencode.json baseURLs use. A host
+          # network preset that denies the gateway still wins.
+          - host.docker.internal:3111
+          - localhost:3111
+          - localhost:11434
+          - localhost:8080
+          - 172.17.0.1:11434
+          - 172.17.0.1:8080
+
+  # Optional: without a stored secret and an approved binding the sandbox
+  # starts with the credential withheld and gh reports the sentinel as invalid.
+  - type: com.docker.sandbox/credential@1
+    optional: true
+    description: GitHub access for gh and git
+    config:
+      service: github
+      phase: runtime
+      apiKey:
+        name: GH_TOKEN
+        proxyManaged: true
+        inject:
+          - {domain: api.github.com, header: Authorization, format: "Bearer %s"}
+          - {domain: github.com, header: Authorization, format: "Bearer %s"}
+
+  # Only the create-time setup remains: the runtime owns the skills mount and
+  # writes agent-context, so the kit just prepares the config directory and
+  # links the host commands and plugins beside the sandbox's own files.
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: |
+            set -eu
+            mkdir -p /home/agent/.config/opencode/skills
+            # Do not recurse: the runtime manages the skills directory.
+            chown agent:agent /home/agent/.config /home/agent/.config/opencode
+            for d in commands plugins; do
+              dest="/home/agent/.config/opencode/$d"
+              if [ -e "$dest" ] && [ ! -L "$dest" ]; then rm -rf "$dest"; fi
+              ln -sfn '${{ kit.args.home }}/.config/opencode/'"$d" "$dest"
+            done
+          user: "0"
+          description: Prepare the OpenCode config directory and link host commands and plugins
+
+  # The runtime links the sbx shared store entries into this directory
+  # read-only while keeping the directory itself writable for bundled skills.
+  - type: com.docker.sandbox/agent-skills@1
+    optional: true
+    config:
+      path: /home/agent/.config/opencode/skills
+
+  # Sandbox-only guidance. The host global AGENTS.md is not symlinked here;
+  # opencode.json loads it through its instructions field instead, leaving the
+  # standard global profile for the runtime-managed content.
+  - type: com.docker.sandbox/agent-context@2
+    optional: true
+    config:
+      filename: AGENTS.md
+      directory: /home/agent/.config/opencode
+      content: |
+        ## Sandbox environment
+
+        - OpenCode config, plugins, commands and custom skills are mounted read-only from the host at `${{ kit.args.home }}/.config/opencode`. Edit them on the host; changes apply without rebuilding this sandbox. The host global `AGENTS.md` is loaded through the `instructions` entry in `opencode.json`.
+        - Repository skills installed with `sbx skills add` are mounted from the sbx shared store by the `agent-skills` capability. Custom skills under `~/.config/opencode/skills` are loaded through the `skills` entry in `opencode.json`. Manage both on the host.
+        - The `agentmemory` MCP connects directly to the host agentmemory server at `http://host.docker.internal:3111` (see `AGENTMEMORY_URL`). This is optional: if the host server is not running, the MCP automatically switches to a reduced sandbox-local toolset (explicit saves only, kept inside the sandbox and never synced to the host) and automatic capture pauses. The full toolset and capture resume automatically once the host server is reachable again.
+        - Docker is available inside the sandbox; prefer it for running code. `sudo` is passwordless for the `agent` user.

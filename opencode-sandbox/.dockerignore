@@ -1,0 +1,6 @@
+# The kit builds everything from the base image and the descriptor; nothing
+# in the repository is copied into the image. Keep the build context to the
+# two files the kit frontend needs to read.
+*
+!opencode-sandbox.yaml
+!opencode-sandbox.dockerfile
