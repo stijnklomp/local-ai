@@ -125,6 +125,66 @@ if command -v node >/dev/null 2>&1 && [ -f "$PROXY_SCRIPT" ] && [ -f "$PROXY_UNI
   fi
 fi
 
+# --- embedding model ---------------------------------------------------------
+# When the repo env selects a non-local embedding provider, make sure Ollama has
+# the model, that its OpenAI-compatible embeddings endpoint answers, and that the
+# vector width matches OPENAI_EMBEDDING_DIMENSIONS. A mismatch would make
+# agentmemory refuse to start (or silently discard the index with
+# AGENTMEMORY_DROP_STALE_INDEX), so catch it here.
+EMBED_STATUS="skipped (no EMBEDDING_PROVIDER in agentmemory.env)"
+SPEC_EMBED_PROVIDER="$(sed -n 's/^EMBEDDING_PROVIDER=\([^ #]*\).*/\1/p' "$REPO_DIR/agentmemory.env" 2>/dev/null | head -n1)"
+SPEC_EMBED_MODEL="$(sed -n 's/^OPENAI_EMBEDDING_MODEL=\([^ #]*\).*/\1/p' "$REPO_DIR/agentmemory.env" 2>/dev/null | head -n1)"
+SPEC_EMBED_DIMS="$(sed -n 's/^OPENAI_EMBEDDING_DIMENSIONS=\([^ #]*\).*/\1/p' "$REPO_DIR/agentmemory.env" 2>/dev/null | head -n1)"
+if [ -n "$SPEC_EMBED_PROVIDER" ] && [ "$SPEC_EMBED_PROVIDER" != "local" ]; then
+  OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
+  SPEC_EMBED_MODEL="${SPEC_EMBED_MODEL:-qwen3-embedding:0.6b}"
+  if ! command -v curl >/dev/null 2>&1; then
+    EMBED_STATUS="skipped (curl not found)"
+  else
+    if curl -s -m 5 "$OLLAMA_URL/api/tags" | grep -q "\"name\":\"${SPEC_EMBED_MODEL}"; then
+      EMBED_STATUS="${SPEC_EMBED_MODEL} already present"
+    else
+      echo "Pulling ${SPEC_EMBED_MODEL} with Ollama..."
+      if curl -s -m 900 -X POST "$OLLAMA_URL/api/pull" -H 'Content-Type: application/json' \
+           -d "{\"model\":\"${SPEC_EMBED_MODEL}\",\"stream\":false}" | grep -q '"status":"success"'; then
+        EMBED_STATUS="${SPEC_EMBED_MODEL} pulled"
+      else
+        EMBED_STATUS="${SPEC_EMBED_MODEL} pull failed; run: ollama pull ${SPEC_EMBED_MODEL}"
+      fi
+    fi
+
+    EMBED_JSON="$(curl -s -m 120 "$OLLAMA_URL/v1/embeddings" -H 'Content-Type: application/json' \
+      -d "{\"model\":\"${SPEC_EMBED_MODEL}\",\"input\":\"embedding health check\"}")"
+    EMBED_DIMS_ACTUAL=""
+    if command -v node >/dev/null 2>&1; then
+      EMBED_DIMS_ACTUAL="$(printf '%s' "$EMBED_JSON" | node -e '
+        let s = "";
+        process.stdin.on("data", (d) => { s += d; })
+          .on("end", () => {
+            try {
+              const v = JSON.parse(s)?.data?.[0]?.embedding;
+              if (Array.isArray(v)) console.log(v.length);
+            } catch {}
+          });
+      ' 2>/dev/null)"
+    fi
+
+    if [ -n "$EMBED_DIMS_ACTUAL" ]; then
+      if [ -n "$SPEC_EMBED_DIMS" ] && [ "$EMBED_DIMS_ACTUAL" != "$SPEC_EMBED_DIMS" ]; then
+        EMBED_STATUS="${EMBED_STATUS}; WARNING: model returns ${EMBED_DIMS_ACTUAL} dims but OPENAI_EMBEDDING_DIMENSIONS=${SPEC_EMBED_DIMS}"
+      else
+        EMBED_STATUS="${EMBED_STATUS}; embeddings OK (${EMBED_DIMS_ACTUAL} dims)"
+      fi
+    elif printf '%s' "$EMBED_JSON" | grep -q '"embedding"'; then
+      EMBED_STATUS="${EMBED_STATUS}; embeddings endpoint OK (dimension not checked)"
+    else
+      EMBED_STATUS="${EMBED_STATUS}; embeddings endpoint check failed"
+    fi
+  fi
+elif [ "$SPEC_EMBED_PROVIDER" = "local" ]; then
+  EMBED_STATUS="local provider; no Ollama model needed"
+fi
+
 # --- agentmemory env -----------------------------------------------------------
 # Replace the host env with this repo's agentmemory.env (the source of truth).
 # Keep a .bak, preserve the secret if it lived only in the old file, and allow
@@ -161,6 +221,7 @@ fi
 
 echo "Synced to ${CONFIG_DIR}: opencode.json, AGENTS.md, ${PLUGIN_COUNT} plugin file(s), ${COMMAND_COUNT} command file(s)."
 echo "agentmemory proxy: ${PROXY_STATUS}."
+echo "embedding model: ${EMBED_STATUS}."
 echo "~/.agentmemory/.env: ${AM_ENV_STATUS}."
 echo "Previous versions were copied to *.bak (single file per source, overwritten every run)."
 echo "If you customized opencode.json, merge your changes manually."
