@@ -6,6 +6,16 @@ const FILE_TOOLS = new Set(["read", "write", "edit", "glob", "grep"]);
 const FILE_KEYS = ["filePath", "file_path", "path", "file", "pattern"];
 const MAX_STASHED_FILES = 20;
 const IDLE_SUMMARIZE_COOLDOWN_MS = 3000;
+// Title-only pointer to earlier sessions, injected while the conversation has
+// no assistant turn yet (a new session or the segment after /clear).
+const POINTER_SESSION_LIMIT = 5;
+// Fetch a wide window before filtering, otherwise a run of recent trivial
+// sessions hides the older substantive ones.
+const POINTER_FETCH_LIMIT = 100;
+const POINTER_CACHE_MS = 60000;
+const POINTER_TITLE_MAX = 60;
+// Skip trivial sessions (test prompts, abandoned starts) in the pointer.
+const POINTER_MIN_OBSERVATIONS = 10;
 
 const DEBUG = process.env.OPENCODE_AGENTMEMORY_DEBUG === "1";
 const SECRET = process.env.AGENTMEMORY_SECRET || "";
@@ -72,6 +82,30 @@ async function postJson(path: string, body: Record<string, unknown>): Promise<un
   }
 }
 
+async function getJson(path: string): Promise<unknown | null> {
+  try {
+    const res = await fetch(`${API}/agentmemory${path}`, {
+      method: "GET",
+      headers: authHeaders(),
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok ? await res.json() : null;
+  } catch (e) {
+    if (DEBUG) console.error(`[agentmemory] GET ${path} failed:`, (e as Error).message);
+    return null;
+  }
+}
+
+function escapeText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function oneLine(v: unknown, max: number): string {
+  if (typeof v !== "string") return "";
+  const text = v.replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 function safeSlice(v: unknown, max: number): string {
   if (typeof v === "string") return v.slice(0, max);
   if (v == null) return "";
@@ -101,6 +135,64 @@ export default Plugin.define({
     const stashedFiles = new Map<string, Set<string>>();
     const toolStarts = new Map<string, { tool: string; input: unknown; start: number }>();
     const lastIdleSummarize = new Map<string, number>();
+    // Short-lived cache of this project's recent session titles.
+    let pointerCache: { at: number; entries: SessionPointerEntry[] } | null = null;
+    // Fallback throttle for the transcript check, used only if the hook does
+    // not expose event.messages.
+    const assistantCheck = new Map<string, { at: number; has: boolean }>();
+
+    type SessionPointerEntry = { id: string; date: string; title: string };
+
+    // A conversation is "fresh" until it has an assistant turn. That is true
+    // for a new session and again right after /clear, so the pointer returns
+    // without being sent on every prompt of a long session.
+    async function hasAssistantTurn(sid: string, event: { messages?: unknown }): Promise<boolean> {
+      // OpenCode's transcript entries carry `type` ("user", "assistant", ...),
+      // not `role`, so accept both shapes.
+      const isAssistant = (m: any): boolean =>
+        (m?.type ?? m?.info?.role ?? m?.role ?? m?.message?.role) === "assistant";
+      if (Array.isArray(event.messages)) return event.messages.some(isAssistant);
+      const cached = assistantCheck.get(sid);
+      if (cached && Date.now() - cached.at < 1000) return cached.has;
+      try {
+        const messages = await ctx.session.context({ sessionID: sid });
+        const has = Array.isArray(messages) && messages.some(isAssistant);
+        assistantCheck.set(sid, { at: Date.now(), has });
+        return has;
+      } catch {
+        return true; // fail closed: skip injection rather than spam
+      }
+    }
+
+    async function sessionPointer(sid: string): Promise<string | null> {
+      if (!pointerCache || Date.now() - pointerCache.at > POINTER_CACHE_MS) {
+        const res = await getJson(
+          `/sessions?project=${encodeURIComponent(projectPath)}&limit=${POINTER_FETCH_LIMIT}`,
+        );
+        const raw = (res as any)?.sessions;
+        const list: any[] = Array.isArray(raw) ? raw : [];
+        const entries: SessionPointerEntry[] = list
+          .filter((s) => (typeof s?.observationCount === "number" ? s.observationCount : 0) >= POINTER_MIN_OBSERVATIONS)
+          .map((s) => ({
+            id: typeof s?.id === "string" ? s.id : "",
+            date: typeof s?.startedAt === "string" ? s.startedAt.slice(0, 10) : "",
+            title: oneLine(s?.summary?.title ?? s?.firstPrompt, POINTER_TITLE_MAX),
+          }))
+          .filter((e) => e.id.length > 0 && e.title.length > 0)
+          .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+        pointerCache = { at: Date.now(), entries };
+      }
+      const entries = (pointerCache?.entries ?? [])
+        .filter((e) => e.id !== sid)
+        .slice(0, POINTER_SESSION_LIMIT);
+      if (entries.length === 0) return null;
+      return [
+        "<agentmemory-sessions>",
+        "Earlier sessions in this project (titles only):",
+        ...entries.map((e) => `- ${e.date || "unknown date"}  ${escapeText(e.title)}`),
+        "</agentmemory-sessions>",
+      ].join("\n");
+    }
 
     function stashFor(sid: string): Set<string> {
       let s = stashedFiles.get(sid);
@@ -261,6 +353,7 @@ export default Plugin.define({
               if (sid === activeSessionId) activeSessionId = null;
               stashedFiles.delete(sid);
               lastIdleSummarize.delete(sid);
+              assistantCheck.delete(sid);
               break;
             }
 
@@ -390,6 +483,15 @@ export default Plugin.define({
       const sid = event.sessionID || activeSessionId;
       if (!sid) return;
 
+      // Title-only pointer to earlier sessions, only while this conversation
+      // has no assistant turn yet. Titles and dates only, so an unrelated
+      // session cannot feed the model stale narratives; it decides whether to
+      // recall details.
+      if (!(await hasAssistantTurn(sid, event))) {
+        const pointer = await sessionPointer(sid);
+        if (pointer) event.system.push({ type: "text", text: pointer });
+      }
+
       // File enrichment injection for stashed files.
       const stash = stashFor(sid);
       if (stash.size > 0) {
@@ -503,6 +605,8 @@ export default Plugin.define({
       stashedFiles.clear();
       toolStarts.clear();
       lastIdleSummarize.clear();
+      assistantCheck.clear();
+      pointerCache = null;
     };
   },
 });
