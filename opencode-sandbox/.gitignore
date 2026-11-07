@@ -1,0 +1,17 @@
+# Secrets and machine-local state. The tracked agentmemory.env is a template
+# and contains no secret; the real secret lives in ~/.agentmemory/secret.
+agentmemory-secret
+*.secret
+.env
+.env.*
+!.env.example
+
+# Generated / backup files
+*.bak
+*.log
+*.orig
+*.rej
+
+# Dependencies and platform noise
+node_modules/
+.DS_Store

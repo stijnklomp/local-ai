@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly agentmemory snapshot
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=1h
+Unit=agentmemory-snapshot.service
+
+[Install]
+WantedBy=timers.target

@@ -101,6 +101,30 @@ function postChat(port, body) {
   return req;
 }
 
+function requestChat(port, body) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        method: "POST",
+        path: "/v1/chat/completions",
+        headers: { "content-type": "application/json" },
+      },
+      (res) => {
+        let out = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          out += chunk;
+        });
+        res.on("end", () => resolve({ status: res.statusCode, body: JSON.parse(out) }));
+      },
+    );
+    req.on("error", reject);
+    req.end(JSON.stringify(body));
+  });
+}
+
 test("client abort closes the upstream request and stays quiet", { timeout: 30000 }, async () => {
   let sawRequest;
   const requestSeen = new Promise((resolve) => {
@@ -207,6 +231,78 @@ test("normal chat response is still repaired", { timeout: 30000 }, async () => {
       payload.body.choices[0].message.content,
       "<observation><title>shell</title><fact>run cmd &amp;&amp; a &lt; b</fact></observation>",
     );
+  } finally {
+    child.kill("SIGKILL");
+    await close(upstream);
+  }
+});
+
+test("compression requests are capped, summaries are not", { timeout: 30000 }, async () => {
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      seen.push(JSON.parse(body));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "<observation><title>shell</title></observation>",
+              },
+            },
+          ],
+        }),
+      );
+    });
+  });
+  await listen(upstream);
+  const upstreamPort = upstream.address().port;
+
+  const { child, port } = await startProxy(upstreamPort);
+  try {
+    const compressionSystem =
+      "You are a memory compression engine for an AI coding agent. Your job is to extract ...";
+    const summarySystem =
+      "You are a session summarizer for an AI coding agent's memory system. Given all ...";
+
+    await requestChat(port, {
+      max_tokens: 4096,
+      temperature: 0.9,
+      messages: [
+        { role: "system", content: compressionSystem },
+        { role: "user", content: "compress this observation" },
+      ],
+    });
+    await requestChat(port, {
+      max_tokens: 4096,
+      messages: [
+        { role: "system", content: summarySystem },
+        { role: "user", content: "summarize this session" },
+      ],
+    });
+    await requestChat(port, {
+      messages: [
+        { role: "system", content: compressionSystem },
+        { role: "user", content: "compress this observation" },
+      ],
+    });
+
+    assert.equal(seen.length, 3);
+    // Compression: capped at the default 800, and sampling defaults injected.
+    assert.equal(seen[0].max_tokens, 800);
+    assert.equal(seen[0].temperature, 0.9);
+    assert.equal(seen[0].top_p, 0.1);
+    // Summary: untouched.
+    assert.equal(seen[1].max_tokens, 4096);
+    // Compression without max_tokens: cap added.
+    assert.equal(seen[2].max_tokens, 800);
   } finally {
     child.kill("SIGKILL");
     await close(upstream);

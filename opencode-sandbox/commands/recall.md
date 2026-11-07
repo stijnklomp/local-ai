@@ -1,4 +1,4 @@
-Search past session observations and lessons for relevant context. Wrap the `memory_smart_search` and `memory_lesson_recall` MCP tools.
+Search past session observations and lessons for relevant context. Wrap the `agentmemory_memory_smart_search` and `agentmemory_memory_lesson_recall` MCP tools (OpenCode prefixes MCP tool names with the server name).
 
 ## Usage
 
@@ -8,8 +8,8 @@ Search past session observations and lessons for relevant context. Wrap the `mem
 
 ## Instructions
 
-1. Call `memory_smart_search` with the query and `limit: 10` (hybrid BM25 + vector + graph search).
-2. Call `memory_lesson_recall` with the same query and `limit: 5` (lesson search).
+1. Call `agentmemory_memory_smart_search` with the query and `limit: 10` (hybrid BM25 + vector + graph search).
+2. Call `agentmemory_memory_lesson_recall` with the same query and `limit: 5` (lesson search).
 3. Combine results and present to the user:
    - Group by session
    - Show type, title, and narrative for each observation

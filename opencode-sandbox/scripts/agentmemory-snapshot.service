@@ -1,0 +1,17 @@
+[Unit]
+Description=agentmemory snapshot and retention
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart="@SNAPSHOT_SCRIPT@" --keep "@SNAPSHOT_KEEP@"
+TimeoutStartSec=30min
+# Snapshot creation and pruning must never compete with the desktop. The script
+# runs every git command in its own memory-capped scope; these limits are the
+# backstop when systemd-run is unavailable.
+Nice=19
+IOSchedulingClass=idle
+MemoryHigh=1G
+MemoryMax=3G
+MemorySwapMax=0

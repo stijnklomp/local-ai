@@ -19,10 +19,15 @@
 //   not ready, so it never burns observations' attempt counts on a dead stack.
 //
 // Safety:
-//   - only completed (non-active) sessions are considered
-//   - observations at or above the attempt cap are skipped when a whole page is
-//     exhausted, and are never retried forever in a tight loop
-//   - time-budgeted per pass, with a persisted cursor so long backlogs resume
+//   - only completed (non-active) sessions are considered: an active session is
+//     still producing observations and its own live compression must not be
+//     competing with retries
+//   - observations at or above the attempt cap are skipped, but only until
+//     AGENTMEMORY_RETRY_CAPPED_AFTER_MS (default 24 hours) has passed since
+//     their last attempt, so transient overload (including proxy 503s) is
+//     revisited the same day instead of after a week
+//   - time-budgeted per pass, with a persisted per-session cursor so long
+//     backlogs resume
 //   - retries go through the host repair proxy, exactly like live compression
 
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
@@ -51,8 +56,13 @@ Environment:
   AGENTMEMORY_RETRY_INTERVAL_MS           idle interval (default 30m)
   AGENTMEMORY_RETRY_BUSY_INTERVAL_MS      interval while a cursor remains (default 5m)
   AGENTMEMORY_RETRY_NOT_READY_INTERVAL_MS interval while the stack is not ready (default 2m)
+  AGENTMEMORY_RETRY_ACTIVE_INTERVAL_MS    interval while an agent session is active (default 2m)
+  AGENTMEMORY_RETRY_IDLE_ONLY             skip passes while any session is active
+                                          (default true; set to false to retry anyway)
   AGENTMEMORY_RETRY_BUDGET_MS             time budget per pass (default 10m)
-  AGENTMEMORY_RETRY_MAX_ATTEMPTS          per-observation attempt cap (default 3)
+  AGENTMEMORY_RETRY_MAX_ATTEMPTS          per-observation attempt cap (default 6)
+  AGENTMEMORY_RETRY_CAPPED_AFTER_MS       recheck an observation at the attempt
+                                          cap after this long (default 24h)
   AGENTMEMORY_RETRY_BATCH                 retry batch size, 1-100 (default 10)
   AGENTMEMORY_RETRY_STATE_DIR             state directory (default ~/.local/state/agentmemory-host)`);
   process.exit(0);
@@ -60,8 +70,20 @@ Environment:
 const INTERVAL_MS = positive(process.env.AGENTMEMORY_RETRY_INTERVAL_MS, 30 * 60 * 1000);
 const BUSY_INTERVAL_MS = positive(process.env.AGENTMEMORY_RETRY_BUSY_INTERVAL_MS, 5 * 60 * 1000);
 const NOT_READY_INTERVAL_MS = positive(process.env.AGENTMEMORY_RETRY_NOT_READY_INTERVAL_MS, 2 * 60 * 1000);
+const ACTIVE_INTERVAL_MS = positive(
+  process.env.AGENTMEMORY_RETRY_ACTIVE_INTERVAL_MS,
+  2 * 60 * 1000,
+);
+// Retries are background hygiene. While a session is active the user is paying
+// for latency, and live compression already has the model; running a pass then
+// only lengthens both queues.
+const IDLE_ONLY = process.env.AGENTMEMORY_RETRY_IDLE_ONLY !== "false";
 const BUDGET_MS = positive(process.env.AGENTMEMORY_RETRY_BUDGET_MS, 10 * 60 * 1000);
-const MAX_ATTEMPTS = positive(process.env.AGENTMEMORY_RETRY_MAX_ATTEMPTS, 3);
+const MAX_ATTEMPTS = positive(process.env.AGENTMEMORY_RETRY_MAX_ATTEMPTS, 6);
+const CAPPED_RECHECK_MS = positive(
+  process.env.AGENTMEMORY_RETRY_CAPPED_AFTER_MS,
+  24 * 60 * 60 * 1000,
+);
 const BATCH = clamp(positive(process.env.AGENTMEMORY_RETRY_BATCH, 10), 1, 100);
 const REQUEST_TIMEOUT_MS = positive(process.env.AGENTMEMORY_RETRY_TIMEOUT_MS, 180 * 1000);
 const MAX_SESSION_PAGES = 50;
@@ -220,13 +242,13 @@ async function request(url, { method = "GET", body, timeoutMs = 15000 } = {}) {
 }
 
 async function serverReachable() {
+  // /livez is the unauthenticated liveness probe. /health requires the shared
+  // secret and returns 503 for a critical (but still running) report, which
+  // used to look like "server unreachable" here.
   try {
-    await request(`${BASE}/agentmemory/health`, { timeoutMs: 5000 });
+    await request(`${BASE}/agentmemory/livez`, { timeoutMs: 5000 });
     return true;
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("HTTP 401")) {
-      warn("agentmemory rejected the shared secret (HTTP 401); check ~/.agentmemory/secret and AGENTMEMORY_SECRET");
-    }
+  } catch {
     return false;
   }
 }
@@ -256,7 +278,11 @@ async function preflight() {
   try {
     status = await request(`${BASE}/agentmemory/status`, { timeoutMs: 10000 });
   } catch (error) {
-    log(`could not read agentmemory status (${error instanceof Error ? error.message : String(error)}); skipping pass`);
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("HTTP 401") || message.includes("HTTP 403")) {
+      warn("agentmemory rejected the shared secret; check ~/.agentmemory/secret and AGENTMEMORY_SECRET");
+    }
+    log(`could not read agentmemory status (${message}); skipping pass`);
     return false;
   }
   if (status?.provider?.llm !== "llm") {
@@ -276,8 +302,25 @@ async function preflight() {
   return true;
 }
 
-async function listProjects() {
-  const projects = new Set();
+// Active sessions are still producing observations. Their live compression is
+// already competing for the model, so retrying them here only deepens the
+// backlog. They become eligible once the server marks them completed.
+async function anyActiveSession() {
+  const url = new URL(`${BASE}/agentmemory/sessions`);
+  url.searchParams.set("limit", "100");
+  try {
+    const data = await request(url.toString(), { timeoutMs: 15000 });
+    // Sessions are returned newest first, so the current work is on the first
+    // page; a full walk is unnecessary just to decide whether to stay idle.
+    return (data?.sessions || []).some((session) => session && session.status === "active");
+  } catch (error) {
+    log(`could not check for active sessions: ${errorMessage(error)}`);
+    return false;
+  }
+}
+
+async function listCompletedSessions() {
+  const sessions = [];
   let cursor = null;
   for (let page = 0; page < MAX_SESSION_PAGES; page += 1) {
     if (stopping) break;
@@ -286,29 +329,41 @@ async function listProjects() {
     if (cursor) url.searchParams.set("cursor", cursor);
     const data = await request(url.toString(), { timeoutMs: 15000 });
     for (const session of data?.sessions || []) {
-      if (typeof session?.project === "string" && session.project.trim()) {
-        projects.add(session.project);
-      }
+      if (typeof session?.id !== "string" || !session.id) continue;
+      if (session.status === "active") continue;
+      sessions.push({
+        id: session.id,
+        project: typeof session.project === "string" ? session.project : "",
+      });
     }
     cursor = data?.nextCursor || null;
     if (!cursor) break;
   }
-  return [...projects].sort();
+  return sessions;
 }
 
 function defaultState() {
-  return { version: 1, projects: {}, lastRunAt: null, lastPass: null };
+  return { version: 2, sessions: {}, capped: {}, lastRunAt: null, lastPass: null };
 }
 
 function loadState() {
   try {
     const parsed = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
-    if (parsed && typeof parsed === "object" && parsed.version === 1 && parsed.projects && typeof parsed.projects === "object") {
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      parsed.version === 2 &&
+      parsed.sessions &&
+      typeof parsed.sessions === "object"
+    ) {
+      if (!parsed.capped || typeof parsed.capped !== "object") parsed.capped = {};
       return parsed;
     }
   } catch {
     // Missing or corrupt state starts fresh; compression state lives on the server.
   }
+  // Version 1 stored cursors per project. Cursors are bound to their scope, so
+  // they cannot be reused for per-session retries; start a fresh pass.
   return defaultState();
 }
 
@@ -319,16 +374,106 @@ function saveState(state) {
   renameSync(tmp, STATE_FILE);
 }
 
-function inspectUrl(project, cursor, limit = 100) {
+function inspectUrl(sessionId, cursor, limit = 100) {
   const url = new URL(`${BASE}/agentmemory/compression`);
-  url.searchParams.set("project", project);
+  url.searchParams.set("sessionId", sessionId);
   url.searchParams.set("limit", String(limit));
   if (cursor) url.searchParams.set("cursor", cursor);
   return url.toString();
 }
 
-async function runProject(project, state, budgetStarted, totals) {
-  let cursor = state.projects[project]?.cursor || null;
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function parseTimestamp(value) {
+  if (typeof value !== "string" || !value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+// The compression listing exposes attempts but not lastAttemptAt. Read it from
+// the session's observations only when an item sits at the attempt cap; capped
+// items are rare, so the page walk stays contained to those sessions.
+const observationMetaCache = new Map();
+
+async function observationCompressionMeta(sessionId) {
+  const cached = observationMetaCache.get(sessionId);
+  if (cached) return cached;
+  const meta = new Map();
+  let cursor = null;
+  let complete = false;
+  for (let page = 0; page < MAX_SESSION_PAGES; page += 1) {
+    if (stopping) break;
+    const url = new URL(`${BASE}/agentmemory/observations`);
+    url.searchParams.set("sessionId", sessionId);
+    url.searchParams.set("limit", "100");
+    if (cursor) url.searchParams.set("cursor", cursor);
+    let data;
+    try {
+      data = await request(url.toString(), { timeoutMs: 20000 });
+    } catch (error) {
+      log(`could not read observations for ${sessionId}: ${errorMessage(error)}`);
+      return meta;
+    }
+    for (const observation of data?.observations || []) {
+      if (observation && typeof observation.id === "string") {
+        meta.set(observation.id, observation.compression || {});
+      }
+    }
+    cursor = data?.nextCursor || null;
+    if (!cursor) {
+      complete = true;
+      break;
+    }
+  }
+  // Only cache a complete read; a partial one would make cappedRetryDue fall
+  // back to its first-seen marker for an observation it never saw.
+  if (complete) {
+    if (observationMetaCache.size >= 32) observationMetaCache.clear();
+    observationMetaCache.set(sessionId, meta);
+  }
+  return meta;
+}
+
+// An observation at the attempt cap was skipped forever by the old policy, even
+// when it only failed because a burst of live compression overloaded the model.
+// Recheck it once the cooldown has passed since its last attempt.
+async function cappedRetryDue(sessionId, item, state) {
+  const meta = await observationCompressionMeta(sessionId);
+  const lastAt = parseTimestamp(meta.get(item.observationId)?.lastAttemptAt);
+  if (lastAt !== null) {
+    if (state.capped[item.observationId] !== undefined) {
+      delete state.capped[item.observationId];
+      saveState(state);
+    }
+    return Date.now() - lastAt >= CAPPED_RECHECK_MS;
+  }
+  // Fallback when the observation or its metadata is unavailable: remember when
+  // this worker first saw it capped and recheck after the same cooldown.
+  const firstSeen = parseTimestamp(state.capped[item.observationId]);
+  if (firstSeen === null) {
+    state.capped[item.observationId] = new Date().toISOString();
+    saveState(state);
+    return false;
+  }
+  return Date.now() - firstSeen >= CAPPED_RECHECK_MS;
+}
+
+async function runSession(session, state, budgetStarted, totals) {
+  const sessionId = session.id;
+  let cursor = state.sessions[sessionId]?.cursor || null;
+
+  const remember = (next) => {
+    state.sessions[sessionId] = { cursor: next, project: session.project };
+    saveState(state);
+    cursor = next;
+  };
+  const forget = () => {
+    delete state.sessions[sessionId];
+    saveState(state);
+  };
+
   for (let step = 0; step < MAX_PAGE_STEPS; step += 1) {
     if (stopping) return;
     if (Date.now() - budgetStarted >= BUDGET_MS) {
@@ -341,43 +486,51 @@ async function runProject(project, state, budgetStarted, totals) {
       // Limit 1 gives us a cursor immediately after the first observation that
       // needs compression, so an observation at the attempt cap can be skipped
       // without spending a model call on it.
-      peek = await request(inspectUrl(project, cursor, 1), { timeoutMs: 20000 });
+      peek = await request(inspectUrl(sessionId, cursor, 1), { timeoutMs: 20000 });
     } catch (error) {
-      log(`inspect failed for ${project}: ${error instanceof Error ? error.message : String(error)}`);
+      log(`inspect failed for ${sessionId}: ${errorMessage(error)}`);
       return;
     }
     const first = Array.isArray(peek?.items) ? peek.items[0] : null;
     if (!first) {
       // A sparse page can still return a cursor when the server hit its scan
-      // limit; advance instead of assuming the project is finished.
+      // limit; advance instead of assuming the session is finished.
       const next = peek?.nextCursor || null;
       if (next && next !== cursor) {
-        state.projects[project] = { cursor: next };
-        saveState(state);
-        cursor = next;
+        remember(next);
         continue;
       }
-      delete state.projects[project];
-      saveState(state);
+      forget();
       return;
     }
 
-    if (!first.retryable || Number(first.attempts || 0) >= MAX_ATTEMPTS) {
-      // This observation has exhausted its attempt budget. Advance past it
-      // without retrying; the next iteration peeks at the following one.
+    if (!first.retryable) {
       const next = peek?.nextCursor || null;
       if (!next || next === cursor) {
-        delete state.projects[project];
-        saveState(state);
+        forget();
         return;
       }
-      state.projects[project] = { cursor: next };
-      saveState(state);
-      cursor = next;
+      remember(next);
       continue;
     }
 
-    const body = { project, limit: BATCH };
+    const attempts = Number(first.attempts || 0);
+    if (attempts >= MAX_ATTEMPTS && !(await cappedRetryDue(sessionId, first, state))) {
+      // Still inside the cooldown. Advance past it; the next iteration peeks at
+      // the following observation.
+      const next = peek?.nextCursor || null;
+      if (!next || next === cursor) {
+        forget();
+        return;
+      }
+      remember(next);
+      continue;
+    }
+    if (attempts >= MAX_ATTEMPTS) {
+      log(`${sessionId}: rechecking ${first.observationId} after the capped cooldown (${attempts} attempts)`);
+    }
+
+    const body = { sessionId, limit: BATCH };
     if (cursor) body.cursor = cursor;
     let result;
     try {
@@ -387,9 +540,14 @@ async function runProject(project, state, budgetStarted, totals) {
         timeoutMs: REQUEST_TIMEOUT_MS,
       });
     } catch (error) {
-      log(`retry failed for ${project}: ${error instanceof Error ? error.message : String(error)}`);
+      log(`retry failed for ${sessionId}: ${errorMessage(error)}`);
       return;
     }
+
+    // A retry just refreshed the item's compression metadata (and attempts), so
+    // drop the cached view before the next peek in this session.
+    observationMetaCache.delete(sessionId);
+    delete state.capped[first.observationId];
 
     const attempted = Number(result?.attempted || 0);
     const recovered = Number(result?.recovered || 0);
@@ -399,59 +557,71 @@ async function runProject(project, state, budgetStarted, totals) {
     totals.failed += failed;
 
     const next = result?.nextCursor || null;
-    if (next) state.projects[project] = { cursor: next };
-    else delete state.projects[project];
+    if (next && next === cursor) {
+      // The server always advances past the last scanned observation, so an
+      // unchanged cursor means it made no progress. Stop this session rather
+      // than retrying the same batch until the page-step limit.
+      log(`${sessionId}: retry cursor did not advance; stopping this session for now`);
+      forget();
+      return;
+    }
+    if (next) remember(next);
+    else forget();
     state.lastRunAt = new Date().toISOString();
-    state.lastPass = { project, attempted, recovered, failed };
+    state.lastPass = { sessionId, attempted, recovered, failed };
     saveState(state);
 
-    log(`${project}: attempted=${attempted} recovered=${recovered} failed=${failed}`);
+    log(`${sessionId}: attempted=${attempted} recovered=${recovered} failed=${failed}`);
     if (!next) return;
-    cursor = next;
 
     // A failure makes the server stop at that item; the cursor has already
     // advanced past it, but pause briefly so a broken provider does not spin.
     if (recovered === 0 && failed > 0) await sleep(2000);
   }
-  log(`page-step limit reached for ${project}; will resume next pass`);
+  log(`page-step limit reached for ${sessionId}; will resume next pass`);
 }
 
 async function runPass(state) {
   const budgetStarted = Date.now();
-  const totals = { attempted: 0, recovered: 0, failed: 0, projects: 0, projectsDone: 0 };
+  const totals = { attempted: 0, recovered: 0, failed: 0, sessions: 0, sessionsDone: 0 };
 
   if (!(await preflight())) return { ...totals, skipped: true };
 
-  let projects;
+  if (IDLE_ONLY && (await anyActiveSession())) {
+    log("an agent session is active; skipping retry pass (idle-only)");
+    return { ...totals, skipped: true, reason: "active-session" };
+  }
+
+  let sessions;
   try {
-    projects = await listProjects();
+    sessions = await listCompletedSessions();
   } catch (error) {
-    log(`could not list sessions: ${error instanceof Error ? error.message : String(error)}`);
+    log(`could not list sessions: ${errorMessage(error)}`);
     return { ...totals, skipped: true };
   }
-  totals.projects = projects.length;
-  if (projects.length === 0) {
-    log("no projects with sessions found");
+  totals.sessions = sessions.length;
+  if (sessions.length === 0) {
+    log("no completed sessions found; active sessions are left to live compression");
     return { ...totals, durationMs: Date.now() - budgetStarted };
   }
 
-  log(`pass starting across ${projects.length} project(s)`);
-  for (const project of projects) {
+  log(`pass starting across ${sessions.length} completed session(s)`);
+  for (const session of sessions) {
     if (stopping) break;
     if (Date.now() - budgetStarted >= BUDGET_MS) {
       log("retry budget reached; will resume next pass");
       break;
     }
     const before = totals.recovered;
-    await runProject(project, state, budgetStarted, totals);
-    if (!state.projects[project]) totals.projectsDone += 1;
+    await runSession(session, state, budgetStarted, totals);
+    if (!state.sessions[session.id]) totals.sessionsDone += 1;
     if (totals.recovered === before && stopping) break;
   }
 
   totals.durationMs = Date.now() - budgetStarted;
   log(
     `pass done: attempted=${totals.attempted} recovered=${totals.recovered} failed=${totals.failed} ` +
-      `projects=${totals.projectsDone}/${totals.projects} duration=${Math.round(totals.durationMs / 1000)}s`,
+      `sessions=${totals.sessionsDone}/${totals.sessions} duration=${Math.round(totals.durationMs / 1000)}s`,
   );
   return totals;
 }
@@ -505,7 +675,7 @@ function releaseLock() {
 }
 
 function hasPendingCursor(state) {
-  return Object.values(state.projects || {}).some((entry) => entry && entry.cursor);
+  return Object.values(state.sessions || {}).some((entry) => entry && entry.cursor);
 }
 
 async function main() {
@@ -522,7 +692,8 @@ async function main() {
 
   log(
     `retry worker starting (${ONCE ? "once" : "watch"}) url=${BASE} proxy=${PROXY} ` +
-      `batch=${BATCH} maxAttempts=${MAX_ATTEMPTS} budget=${Math.round(BUDGET_MS / 1000)}s`,
+      `batch=${BATCH} maxAttempts=${MAX_ATTEMPTS} budget=${Math.round(BUDGET_MS / 1000)}s ` +
+      `idleOnly=${IDLE_ONLY}`,
   );
   if (!SECRET) log("no shared secret found; relying on an unauthenticated loopback server");
 
@@ -541,7 +712,8 @@ async function main() {
       warn(`pass failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (ONCE) break;
-    if (result?.skipped) delay = NOT_READY_INTERVAL_MS;
+    if (result?.reason === "active-session") delay = ACTIVE_INTERVAL_MS;
+    else if (result?.skipped) delay = NOT_READY_INTERVAL_MS;
     else if (hasPendingCursor(state)) delay = BUSY_INTERVAL_MS;
     else delay = INTERVAL_MS;
   }

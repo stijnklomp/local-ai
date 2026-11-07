@@ -11,7 +11,7 @@ One-time host setup, from this directory:
 | 1 | `./scripts/install-dependencies.sh` | Installs sbx 0.51.0 (SHA-256 verified) and agentmemory 0.9.32, and checks KVM. Calls sudo itself; do not run it with sudo. Flags: `--skip-docker-sandbox`, `--skip-agentmemory`. |
 | 2 | `sbx login` | One-time Docker OAuth sign-in; `sbx run` needs it. |
 | 3 | `cp agentmemory.env ~/.agentmemory/.env` | Optional: step 4 installs this file automatically. Manual copy is only needed if you skip `sync-config.sh`. |
-| 4 | `./scripts/sync-config.sh` | Copies this repo's OpenCode config into `~/.config/opencode`. Required before the first launch. Also installs/enables the `agentmemory-ollama-proxy` systemd user unit, replaces `~/.agentmemory/.env` from `agentmemory.env` after backing it up, and pulls/validates the `qwen3-embedding:0.6b` model, including its vector width (pass `--skip-agentmemory-env` to opt out of the env replacement). |
+| 4 | `./scripts/sync-config.sh` | Copies this repo's OpenCode config into `~/.config/opencode`. Required before the first launch. Also installs/enables the `agentmemory-ollama-proxy` systemd user unit and the weekly `agentmemory-snapshot` timer, replaces `~/.agentmemory/.env` from `agentmemory.env` after backing it up, and pulls/validates the `qwen3-embedding:0.6b` model, including its vector width (pass `--skip-agentmemory-env` to opt out of the env replacement). |
 | 5 | `sbx skills add mattpocock/skills` | Optional: installs [mattpocock/skills](https://github.com/mattpocock/skills) into the sbx shared skill store. The kit's `agent-skills@1` capability makes the runtime mount the store into OpenCode's global skills path at the next sandbox start. See [Skills](#skills). |
 | 6 | `./scripts/setup-github-credential.sh` | Optional: approves the `github` credential for this kit and checks for a stored PAT (`sbx secret set github`); needed before sandboxed `gh` can act on GitHub. See [GitHub access](#github-access). |
 | 7 | `sbx secret set-custom --host opencode.ai --env OPENCODE_API_KEY` | Optional: OpenCode (Console) PAT for the default `opencode-go` provider. Set it before the first launch. See [OpenCode (Console) access](#opencode-console-access). |
@@ -22,7 +22,7 @@ Launch OpenCode from any project directory:
 /path/to/local-ai/opencode-sandbox/scripts/run-opencode-in-docker-sandbox.sh
 ```
 
-The host agentmemory server is separate. Start it in another terminal with `./scripts/agentmemory-host.sh` (foreground by default), and stop it with `./scripts/agentmemory-host.sh stop`. See [Running the host server](#running-the-host-server).
+The host agentmemory server is separate. Start it in the background with `./scripts/agentmemory-host.sh --background`; the wrapper stays alive as a supervisor and restarts the server if it crashes. Stop it with `./scripts/agentmemory-host.sh stop`. See [Running the host server](#running-the-host-server).
 
 After changing files in this repo:
 
@@ -66,7 +66,7 @@ The sandbox reads OpenCode config, global instructions, plugins and commands fro
 ./scripts/sync-config.sh
 ```
 
-It copies `opencode.json`, `global-AGENTS.md` (as `AGENTS.md`), `plugins/` and `commands/` into `~/.config/opencode`, creates `plugins/`, `commands/` and `skills/` when missing, validates `opencode.json` before copying, and keeps one `*.bak` per file — a fixed name, written on every run and overwritten in place, so backups never pile up. Other files in those directories are left alone. If you have customized `opencode.json`, merge your changes manually. It also renders `scripts/agentmemory-ollama-proxy.service` with absolute paths into `~/.config/systemd/user/`, enables and restarts that unit, replaces `~/.agentmemory/.env` with this repo's `agentmemory.env` (backing the old file up to `.env.bak` first), and pulls/validates the embedding model named there. Pass `--skip-agentmemory-env` to leave the host env untouched. The script is only ever run manually; nothing invokes it automatically. Changes apply the next time OpenCode starts; no sandbox rebuild is needed. Running it inside the sandbox aborts with a hint, because the sandbox sees `plugins/` and `commands/` as symlinks.
+It copies `opencode.json`, `global-AGENTS.md` (as `AGENTS.md`), `plugins/` and `commands/` into `~/.config/opencode`, creates `plugins/`, `commands/` and `skills/` when missing, validates `opencode.json` before copying, and keeps one `*.bak` per file — a fixed name, written on every run and overwritten in place, so backups never pile up. Other files in those directories are left alone. If you have customized `opencode.json`, merge your changes manually. It also renders `scripts/agentmemory-ollama-proxy.service` with absolute paths into `~/.config/systemd/user/`, enables and restarts that unit, installs/enables the weekly `agentmemory-snapshot` timer (service + timer rendered the same way), replaces `~/.agentmemory/.env` with this repo's `agentmemory.env` (backing the old file up to `.env.bak` first), and pulls/validates the embedding model named there. Pass `--skip-agentmemory-env` to leave the host env untouched. `AGENTMEMORY_SNAPSHOT_KEEP` overrides how many weekly restore points are kept (default 3). The script is only ever run manually; nothing invokes it automatically. Changes apply the next time OpenCode starts; no sandbox rebuild is needed. Running it inside the sandbox aborts with a hint, because the sandbox sees `plugins/` and `commands/` as symlinks.
 
 ### Skills
 
@@ -184,24 +184,39 @@ The Ollama setup, firewall rules and model instructions live in [`../local-model
 
 agentmemory does not have to be running to use the sandbox. If the host health check fails, the launcher prints a note and starts anyway. Inside the sandbox the agentmemory MCP then falls back to a reduced sandbox-local toolset (explicit saves only, kept inside the sandbox and never synced to the host) and automatic session capture pauses. The full toolset and capture resume automatically once the host server is reachable again.
 
+Capture is no longer fire-and-forget only: a failed capture write (`/observe`, `/session/start`, `/session/end`) is appended to a bounded spool at `~/.local/share/opencode-agentmemory-spool/pending.jsonl` inside the sandbox, and the plugin replays it every 30 seconds while the host is reachable. The queue is capped at 5 MB and 7 days, a 4xx response drops an unusable entry instead of blocking the queue, and replay preserves order and stops at the first network/5xx failure. A stale secret (401/403) is retried, since the next OpenCode process rewrites the spool with the refreshed secret. Derived work (`/summarize`, `/crystals/auto`, `/consolidate-pipeline`) stays best-effort so a timeout never duplicates expensive model calls. The spool survives an OpenCode restart, but not `sbx rm` (the sandbox filesystem goes with it).
+
 ### Running the host server
 
-Start and stop the host server through the wrapper; it also manages the compression-retry worker:
+Start and stop the host server through the wrapper; it also supervises the server and manages the compression-retry worker:
 
 ```sh
-./scripts/agentmemory-host.sh              # foreground (default); Ctrl-C stops both
-./scripts/agentmemory-host.sh --background # detach after :3111 is healthy
-./scripts/agentmemory-host.sh stop         # works from any terminal, either mode
-./scripts/agentmemory-host.sh status
+./scripts/agentmemory-host.sh --background  # detach a supervisor and return
+./scripts/agentmemory-host.sh               # foreground; Ctrl-C stops everything
+./scripts/agentmemory-host.sh stop          # stops supervisor, worker and server
+./scripts/agentmemory-host.sh status        # supervisor, server and worker state
 ```
 
-The wrapper runs agentmemory from `$HOME/.local/share/agentmemory` with `NODE_OPTIONS=--max-old-space-size=4096`, waits for `:3111`, then starts `scripts/agentmemory-compression-retry.mjs --watch`. The `agentmemory` CLI starts the engine as a daemon and exits, so the wrapper tracks the server by health rather than by the CLI process; in the foreground it prints the startup output, stays attached, and monitors `:3111` until Ctrl-C or `stop`. PID files, logs and retry state live in `~/.local/state/agentmemory-host/` (`server.log`, `retry.log`, `retry-state.json`). Run it on the host, never inside the sandbox, and do not start a second `agentmemory` process next to it.
+The wrapper runs agentmemory from `$HOME/.local/share/agentmemory` with `NODE_OPTIONS=--max-old-space-size=4096`, waits for `:3111`, runs the idempotent project-scope migration (`POST /agentmemory/migrate {"step":"infer-memory-projects"}`), and starts `scripts/agentmemory-compression-retry.mjs --watch`. The `agentmemory` CLI starts the engine as a daemon and exits, so the wrapper tracks the server by liveness (`/agentmemory/livez`) rather than by the CLI process.
+
+The wrapper is also the supervisor. It checks `:3111` every 5 seconds (configurable) and, after 3 consecutive failures (configurable), restarts the server with capped exponential backoff, then re-runs the migration and restarts the worker. It also restarts the worker whenever it is not running, and logs everything to `~/.local/state/agentmemory-host/supervisor.log`. In the foreground the supervisor lives in the terminal; `--background` detaches it so one invocation per boot is enough, and it keeps retrying even if agentmemory fails at startup. `stop` terminates the supervisor first, so the worker and server go with it.
+
+Logs do not grow without bound during a long run: every supervisor tick checks `supervisor.log`, `server.log` and `retry.log`, and once one passes 10 MB it keeps the previous contents as `<name>.1` and truncates the live file in place. In-place truncation (rather than a rename) is deliberate: the server and worker hold open append descriptors, so a rename would leave them writing to the archived inode.
+
+Environment knobs: `AGENTMEMORY_HOST_HEALTH_INTERVAL` (seconds, default 5), `AGENTMEMORY_HOST_RESTART_AFTER` (failed checks, default 3), `AGENTMEMORY_HOST_MAX_BACKOFF` (seconds, default 60), `AGENTMEMORY_HOST_START_TIMEOUT` (seconds, default 180). PID files, logs and retry state live in `~/.local/state/agentmemory-host/` (`supervisor.log`, `server.log`, `retry.log`, `retry-state.json`). Run it on the host, never inside the sandbox, and do not start a second `agentmemory` process next to it.
 
 If the server is still running from the old manual command, retire it once with `./scripts/agentmemory-host.sh stop`, then start it through the wrapper.
 
-The retry worker is needed because agentmemory marks an observation `compression.status = "failed"` after a compression error and never retries it. Failed observations are still stored, indexed and embedded, but they miss the richer compressed form. The worker follows the server's retry cursor (the server stops at the first failure, so one call cannot drain a list), skips a page once all of its failed observations reach the attempt cap, and no-ops while the server, repair proxy, LLM provider or vector backfill is not ready. Its cursor persists, so a backlog resumes across restarts.
+If the supervisor itself is killed (SIGKILL, reboot), the server keeps running; the next `start` adopts it and supervision resumes.
 
-Only the server lifecycle is managed by the wrapper. The `agentmemory-ollama-proxy` systemd user unit stays installed and enabled, because compression needs the proxy whether or not the server is running.
+The retry worker is needed because agentmemory marks an observation `compression.status = "failed"` after a compression error and never retries it. Failed observations are still stored, indexed and embedded, but they miss the richer compressed form. The worker follows the server's retry cursor (the server stops at the first failure, so one call cannot drain a list) and no-ops while the server, repair proxy, LLM provider or vector backfill is not ready. Two policies keep it from fighting live compression:
+
+- **Completed sessions only.** An active session is still producing observations, and its live compression already competes for the model; the worker skips it and picks it up after the server marks it completed.
+- **Bounded attempts, daily recheck.** Once an observation reaches `AGENTMEMORY_RETRY_MAX_ATTEMPTS` (default 6) it is skipped, but only until `AGENTMEMORY_RETRY_CAPPED_AFTER_MS` (default 24 hours) has passed since its last attempt, so a failure caused by transient overload — including a proxy `503` under load — is revisited the same day instead of abandoned.
+
+Cursors are persisted per session, so a backlog resumes across restarts, and the supervisor restarts the worker if it dies. OpenCode's idle event now posts `/session/end` with `final:false`, so the server finalizes an idle session after `AGENTMEMORY_FINALIZE_IDLE_MS` (default 2 minutes) and the worker can pick up its failures without waiting for process exit or the 24-hour sweep.
+
+Only the server and worker lifecycle is managed by the wrapper. The `agentmemory-ollama-proxy` systemd user unit stays installed and enabled, because compression needs the proxy whether or not the server is running.
 
 ### Local LLM compression (Ollama)
 
@@ -210,8 +225,27 @@ agentmemory v0.9.x keeps LLM features off until a provider is named explicitly: 
 Pointing it straight at Ollama is not enough for reliable compression. agentmemory's compression and summary prompts demand strict XML, and its parser rejects a literal `&` that is not an entity and any raw `<` inside a text field. Shell observations routinely contain `&&` and code such as `a < b`, which local models copy verbatim; at Ollama's default sampling the output is then rejected. `scripts/agentmemory-ollama-proxy.mjs` is a small OpenAI-compatible proxy that sits in front of Ollama and:
 
 - forces `temperature: 0` and `top_p: 0.1` when the request omits them (agentmemory never sends either),
-- escapes bare `&` and stray `<`/`>` inside the text-only XML fields (`scripts/agentmemory-xml-repair.mjs`), and
-- keeps only the `<observation>`/`<summary>` root, dropping code fences, think blocks and trailing prose.
+- caps `max_tokens` for observation-compression requests only: agentmemory hardcodes a 60-second compression deadline (including its own stricter retry) but sends `MAX_TOKENS=4096`, so a verbose local generation can exhaust the budget and be marked `compression_failed`. The compression prompt is recognised by its opening sentence, and its output is capped at `COMPRESSION_MAX_TOKENS` (default 800); summaries, query expansion and consolidation keep their requested limit,
+- escapes bare `&` and stray `<`/`>` inside the text-only XML fields (`scripts/agentmemory-xml-repair.mjs`),
+- keeps only the `<observation>`/`<summary>` root, dropping code fences, think blocks and trailing prose, and
+- **admits a bounded amount of concurrent work** (see below).
+
+Set `COMPRESSION_MAX_TOKENS` or `DEBUG=1` (logs each capped request) in the proxy unit if you need to tune it. The proxy also accepts a per-run `PORT`, `UPSTREAM` and `TIMEOUT_MS`.
+
+#### Backpressure
+
+agentmemory has no global cap on concurrent LLM calls. Every session triggers live compression on its own observation batches, and every subagent is its own session, so four parallel subagents mean four (or more) concurrent 12B generations. Each one gets slower, crosses the hardcoded 60-second compression deadline, fails, and feeds the retry worker — the queue grows faster than it drains.
+
+The proxy therefore gates chat completions rather than letting Ollama queue them:
+
+- at most `MAX_INFLIGHT` (default 2) generations run at once,
+- up to `MAX_QUEUE` (default 8) compression requests wait in FIFO order,
+- beyond that it answers `503` with `Retry-After` immediately. agentmemory marks that observation `compression_failed` and keeps it raw, indexed and embedded; the retry worker picks it up later,
+- session summaries, consolidation and query expansion are rarer and permanent if lost, so they jump ahead of queued compression and are not counted against its queue limit.
+
+`GET http://127.0.0.1:11435/proxy/metrics` returns `inflight`, `queued`, `queuedCompression`, `queuedOther`, `rejected`, `completed` and the configured limits. Watch `rejected` while running several sessions at once: a steadily rising value means the model is too slow for the workload (lower the model size or accept more raw observations), a flat zero means the queue is absorbing the bursts.
+
+The retry worker is idle-gated to match: it skips a pass while any session is `active` (`AGENTMEMORY_RETRY_IDLE_ONLY`, default on) and rechecks every `AGENTMEMORY_RETRY_ACTIVE_INTERVAL_MS` (default 2 min). Retries are background hygiene and must never compete with the session you are using.
 
 `agentmemory.env` sets `OPENAI_BASE_URL=http://127.0.0.1:11435/v1`. `./scripts/sync-config.sh` installs the proxy as a systemd user service: it renders `scripts/agentmemory-ollama-proxy.service` with absolute paths into `~/.config/systemd/user/`, enables and restarts it, and replaces `~/.agentmemory/.env` with this repo's `agentmemory.env` (backing it up to `~/.agentmemory/.env.bak` first). Pass `--skip-agentmemory-env` to leave the host env untouched. The repo file does not contain `AGENTMEMORY_SECRET`; agentmemory keeps its generated secret in `~/.agentmemory/secret`, outside `.env`, so replacing the env does not rotate it. Deleting that file does; after that, re-run the sandbox launcher so `~/.config/opencode/agentmemory-secret` is refreshed. Re-run the script after moving the checkout or changing the Node binary.
 
@@ -238,6 +272,35 @@ The proxy only rewrites `POST .../chat/completions`; every other path and method
 
 agentmemory v0.9.32 authenticates its REST API. On first start it generates a 32-byte random secret and writes it to `~/.agentmemory/secret` (mode 0600); that file, not `~/.agentmemory/.env`, is the normal source. On every launch, the launcher resolves the host secret (`AGENTMEMORY_SECRET` from the environment, else from `~/.agentmemory/.env`, else from `~/.agentmemory/secret`) and writes it to `~/.config/opencode/agentmemory-secret` (mode 0600), inside the read-only host config mount. The image's persistent shell block exports it from there at shell start-up so the MCP client, the capture plugin and the compression-retry worker can authenticate. Deleting `~/.agentmemory/secret` rotates the secret; re-run the launcher and restart the sandbox after that.
 
+### Snapshots and retention
+
+agentmemory can serialize the whole store to `~/.agentmemory/snapshots/state.json` and commit it to a local git repository; every commit is a complete restore point. It is off by default, so `agentmemory.env` sets `SNAPSHOT_ENABLED=true`. The built-in timer is pushed out to the largest delay Node accepts (`SNAPSHOT_INTERVAL=2147483` seconds, just under `2^31-1` ms) so it never competes with the host-side schedule. Do not raise it: Node clamps larger `setInterval` delays to **1 ms**, which turns the server into a snapshot loop (a commit every few seconds, and with git auto-gc enabled, tens of GB of objects).
+
+`./scripts/sync-config.sh` installs and enables `agentmemory-snapshot.timer`, a weekly systemd user timer that runs `./scripts/agentmemory-snapshot.sh --keep 3`. The script creates a snapshot, then keeps only the newest restore points by re-rooting the snapshot repository's history (a backward `git reset` would keep the oldest commits instead). It refuses to prune a repository that does not contain `state.json`, holds a lock so a manual run and the timer cannot overlap, and only rewrites history after a successful snapshot.
+
+Snapshots are bounded on purpose. Every git invocation runs in a memory-capped transient scope (`systemd-run --user --scope`, `MemoryMax=2G`), and the service unit caps the whole job (`MemoryMax=3G`, `Nice=19`, idle I/O). Auto-gc is disabled inside the snapshot repository (`gc.auto=0`, `maintenance.auto=false`) because agentmemory's own `git add`/`git commit` would otherwise trigger `git gc --auto` once the repo passes git's loose-object threshold — uncapped, inside the server process. If history exceeds `keep + 2` commits or the object store exceeds `AGENTMEMORY_SNAPSHOT_MAX_BYTES` (default 2 GiB), pruning rebuilds the repository from the newest `state.json` instead of replaying a huge history; a failed rebase, `reflog expire` or `gc` falls back to the same rebuild, and none of those failures are swallowed. This exists because an unbounded repository reached 81 GB with zero pack files, and every `git gc` allocated ~44 GB until the kernel OOM-killed it — freezing the host for minutes. An unrunnable history is not a restore point.
+
+Run it by hand at any time:
+
+```sh
+./scripts/agentmemory-snapshot.sh              # create + prune
+./scripts/agentmemory-snapshot.sh --list       # hashes, dates, repo size
+./scripts/agentmemory-snapshot.sh --keep 12    # keep more restore points
+./scripts/agentmemory-snapshot.sh --no-prune
+./scripts/agentmemory-snapshot.sh --rebuild    # discard history, keep the newest state.json
+```
+
+`AGENTMEMORY_SNAPSHOT_KEEP` changes the timer's retention (default 3). The first snapshot is large because it contains the whole store; later commits are git deltas. Restore a snapshot through the API:
+
+```sh
+curl -sS -X POST -H "Authorization: Bearer $(cat ~/.agentmemory/secret)" \
+  -H 'Content-Type: application/json' \
+  -d '{"commitHash":"<hash from --list>"}' \
+  http://127.0.0.1:3111/agentmemory/snapshot/restore
+```
+
+Snapshots are a recovery point, not a substitute for the data directory; keep the service running and let the timer do the work.
+
 ### Hidden agentmemory tools
 
 agentmemory advertises its full tool set regardless of which features are enabled, so tools for disabled features return HTTP 5xx errors when called. Slots (`AGENTMEMORY_SLOTS`) and knowledge-graph extraction (`GRAPH_EXTRACTION_ENABLED`) are disabled in `agentmemory.env`, so this repo denies their tools in `opencode.json`: `agentmemory_memory_slot_*`, `agentmemory_memory_graph_query` and `agentmemory_memory_relations`. OpenCode 2 removes denied tools from the model's tool list entirely, so the agent neither sees nor calls them. The deny rules must stay after the allow catch-all because the last matching permission rule wins. If you enable slots or graph extraction on the host, remove the matching deny line(s) and re-run `scripts/sync-config.sh`; the tools become visible again without recreating the sandbox.
@@ -256,7 +319,15 @@ agentmemory advertises its full tool set regardless of which features are enable
 | `agentmemory-host.sh` says the server is already running but was not started by the wrapper | Run `./scripts/agentmemory-host.sh stop` once (it calls `agentmemory stop`), then start through the wrapper. |
 | `agentmemory status` says `Provider: noop (LLM features off)` | Run `./scripts/sync-config.sh` (it replaces `~/.agentmemory/.env` from `agentmemory.env`), then restart the server through the wrapper. A provider key alone does not enable LLM features. |
 | Compression stays `raw`, or logs `parse_failed` | The repair proxy is not running or `OPENAI_BASE_URL` does not point at it. Check `curl -s http://127.0.0.1:11435/api/version`, then restart the server through the wrapper. See [Local LLM compression](#local-llm-compression-ollama). |
-| Some observations stay uncompressed after a failure | agentmemory does not retry them itself. The wrapper's worker retries them while the server runs; check `~/.local/state/agentmemory-host/retry.log`. If the server was started outside the wrapper, run `node scripts/agentmemory-compression-retry.mjs --once` on the host for an immediate pass. Failed observations are still stored, indexed and embedded. |
+| Some observations stay uncompressed after a failure | agentmemory does not retry them itself. The wrapper's supervisor keeps the retry worker alive; check `~/.local/state/agentmemory-host/retry.log` and `.../supervisor.log`. Active sessions are deferred until they complete, and observations at the attempt cap are retried again after 24 hours (`AGENTMEMORY_RETRY_CAPPED_AFTER_MS`). If the server was started outside the wrapper, run `node scripts/agentmemory-compression-retry.mjs --once` on the host for an immediate pass. Failed observations are still stored, indexed and embedded. |
+| Observations stay raw while several sessions/subagents run, and the proxy logs `overloaded` | Expected backpressure: the proxy runs at most `MAX_INFLIGHT` (default 2) generations and queues `MAX_QUEUE` (default 8) compression requests, then answers 503 so they stay raw instead of timing out. Check `curl -s http://127.0.0.1:11435/proxy/metrics`; a high `rejected` means the model is too slow for the session count — use a smaller model or accept raw observations. Retries are idle-gated, so the backlog drains once no session is active. |
+| Compression keeps failing on a local model (`compression_failed`) | agentmemory hardcodes a 60-second compression deadline that also covers its stricter retry. The proxy caps compression output at `COMPRESSION_MAX_TOKENS` (default 800) to fit; if failures persist, lower it (e.g. 600) in the `agentmemory-ollama-proxy` unit and restart that unit, and keep the model warm on the Ollama side (`OLLAMA_KEEP_ALIVE=-1`) so a cold load does not spend the budget. Retried observations recover once the model is warm. |
+| `status` says the supervisor is not running but the server is | The supervisor was killed or the machine rebooted. Run `./scripts/agentmemory-host.sh --background`; it adopts the running server and resumes supervision. |
+| Snapshots appear every few seconds, or the repo grows by ~130 MB per commit | `SNAPSHOT_INTERVAL` is above Node's timer limit. `setInterval` clamps any delay over `2^31-1` ms (2147483 s) to 1 ms, so the server loops on `mem::snapshot-create`. Set `SNAPSHOT_INTERVAL=2147483` (or lower) in `agentmemory.env`, run `./scripts/sync-config.sh`, force-restart the engine (`./scripts/agentmemory-host.sh stop`, then `agentmemory stop --force` in `~/.local/share/agentmemory`), and run `./scripts/agentmemory-snapshot.sh --rebuild` to collapse the loop's commits. `sync-config.sh` warns when the value is out of range. |
+| Snapshot repository has grown to many GB, or `git` OOMs the host | Retention stopped completing: `git gc`/`rebase` over an unbounded history can allocate tens of GB and the kernel OOM-kills git after thrashing the machine. Stop the server first (`./scripts/agentmemory-host.sh stop`) so nothing rewrites `state.json`, then run `./scripts/agentmemory-snapshot.sh --rebuild` (keeps the newest `state.json`, drops the rest), and start it again. Confirm with `git -C ~/.agentmemory/snapshots count-objects -vH`. The timer is now memory-capped (2 GiB per git call, 3 GiB for the job), disables git auto-gc, rebuilds automatically when history exceeds `keep + 2` or the object store exceeds 2 GiB, and stages a replacement repo before swapping it in — so a failed rebuild leaves the old one intact rather than an unborn HEAD. |
+| Snapshot timer does nothing, or `/agentmemory/snapshots` says `Snapshots not enabled` | `SNAPSHOT_ENABLED=true` only takes effect after a server restart. Run `./scripts/sync-config.sh`, restart through the wrapper, then `systemctl --user status agentmemory-snapshot.timer` (or run `./scripts/agentmemory-snapshot.sh` by hand to see the error). |
+| Sandbox spool grows in `~/.local/share/opencode-agentmemory-spool/` | The host server was unreachable while a session ran. The plugin retries every 30 s; once `:3111` is healthy the queue drains. Entries older than 7 days are dropped on replay, and the file is capped at 5 MB. |
+| `agentmemory did not become healthy` on start | The supervisor keeps retrying with capped backoff even when the initial start fails; watch `~/.local/state/agentmemory-host/supervisor.log` and `server.log`. `stop` ends the retry loop. |
 | `sync-config.sh` fails with `~/.config/systemd/user/agentmemory-ollama-proxy.service: Permission denied` | The unit file is root-owned (usually from an earlier `sudo` run). The script now replaces it via a temp file + rename when the directory is writable. If the directory itself is root-owned, run `sudo chown -R "$USER:$USER" ~/.config/systemd/user`, then re-run the script. |
 | OpenCode Console/Go asks for `/connect` or shows unauthenticated | The custom secret was added after this sandbox was created, so `OPENCODE_API_KEY` is unset. Recreate the sandbox (`sbx rm <name>`, then relaunch) and do not run `/connect`; see [OpenCode (Console) access](#opencode-console-access). |
 | `opencode-sandbox.yaml` sanity check | From this directory: `sbx kit inspect . --kit-arg home="$HOME"`, or `sbx kit validate --kit-arg home="$HOME" .`; v3 source validation may require the build. |

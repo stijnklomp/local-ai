@@ -1,5 +1,18 @@
 import { Plugin } from "@opencode/plugin";
 import { spawnSync } from "child_process";
+import { randomUUID } from "node:crypto";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const API = process.env.AGENTMEMORY_URL || "http://localhost:3111";
 const FILE_TOOLS = new Set(["read", "write", "edit", "glob", "grep"]);
@@ -16,6 +29,23 @@ const POINTER_TITLE_MAX = 60;
 // Skip trivial sessions (test prompts, abandoned starts) in the pointer.
 const POINTER_MIN_OBSERVATIONS = 10;
 
+// Failed capture calls are spooled to disk so a host restart mid-session does
+// not lose observations. The queue is bounded by size and age; replay is
+// at-least-once (the server deduplicates observations). It lives in the sandbox
+// home, so it survives an OpenCode restart but not `sbx rm`.
+const SPOOL_DIR =
+  process.env.AGENTMEMORY_SPOOL_DIR ||
+  join(process.env.HOME || homedir(), ".local", "share", "opencode-agentmemory-spool");
+const SPOOL_FILE = join(SPOOL_DIR, "pending.jsonl");
+const SPOOL_FLUSH_FILE = join(SPOOL_DIR, "pending.flushing");
+const SPOOL_MAX_BYTES = 5 * 1024 * 1024;
+const SPOOL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const SPOOL_FLUSH_MS = 30000;
+// Derived work is best-effort: replaying a timed-out summarize or consolidation
+// would duplicate expensive model calls, and the server already summarizes on
+// session end. Only capture writes are worth spooling.
+const SPOOL_EXCLUDE = new Set(["/summarize", "/crystals/auto", "/consolidate-pipeline"]);
+
 const DEBUG = process.env.OPENCODE_AGENTMEMORY_DEBUG === "1";
 const SECRET = process.env.AGENTMEMORY_SECRET || "";
 
@@ -25,16 +55,168 @@ function authHeaders(): Record<string, string> {
   return headers;
 }
 
-async function post(path: string, body: Record<string, unknown>, timeoutMs = 5000): Promise<void> {
+type SendResult = "ok" | "retry" | "drop";
+type SpoolEntry = { at: string; path: string; body: Record<string, unknown> };
+
+// A 4xx means the payload will never be accepted, so it is dropped instead of
+// blocking the queue. Network errors, 5xx, 408 and 429 are retried.
+async function send(
+  path: string,
+  body: Record<string, unknown>,
+  timeoutMs = 5000,
+): Promise<SendResult> {
   try {
-    await fetch(`${API}/agentmemory${path}`, {
+    const res = await fetch(`${API}/agentmemory${path}`, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (res.ok) return "ok";
+    // A stale secret is recoverable: the next OpenCode process rewrites the
+    // spool with the refreshed secret, so keep those entries.
+    if (res.status === 401 || res.status === 403) {
+      if (DEBUG) console.error(`[agentmemory] POST ${path} -> HTTP ${res.status} (will retry)`);
+      return "retry";
+    }
+    if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
+      if (DEBUG) console.error(`[agentmemory] POST ${path} -> HTTP ${res.status} (dropped)`);
+      return "drop";
+    }
+    if (DEBUG) console.error(`[agentmemory] POST ${path} -> HTTP ${res.status} (will retry)`);
+    return "retry";
   } catch (e) {
     if (DEBUG) console.error(`[agentmemory] POST ${path} failed:`, (e as Error).message);
+    return "retry";
+  }
+}
+
+function trimSpool(): void {
+  try {
+    if (statSync(SPOOL_FILE).size <= SPOOL_MAX_BYTES) return;
+    const lines = readFileSync(SPOOL_FILE, "utf8").split("\n").filter((line) => line.length > 0);
+    // Drop the oldest half; recent events are the ones most likely to matter.
+    const keep = lines.slice(Math.floor(lines.length / 2));
+    writeFileSync(SPOOL_FILE, keep.length ? `${keep.join("\n")}\n` : "", { mode: 0o600 });
+    if (DEBUG) console.error(`[agentmemory] spool over ${SPOOL_MAX_BYTES} bytes; kept ${keep.length} entries`);
+  } catch {
+    // Best effort; a bounded queue is better than an unbounded one.
+  }
+}
+
+function spoolAppend(path: string, body: Record<string, unknown>): void {
+  try {
+    mkdirSync(SPOOL_DIR, { recursive: true, mode: 0o700 });
+    appendFileSync(
+      SPOOL_FILE,
+      `${JSON.stringify({ at: new Date().toISOString(), path, body })}\n`,
+      { mode: 0o600 },
+    );
+    trimSpool();
+    if (DEBUG) console.error(`[agentmemory] spooled ${path}`);
+  } catch (e) {
+    if (DEBUG) console.error(`[agentmemory] spool append failed:`, (e as Error).message);
+  }
+}
+
+let spoolFlushing = false;
+
+async function flushSpool(): Promise<void> {
+  if (spoolFlushing) return;
+  spoolFlushing = true;
+  try {
+    // Recover an orphan from a previous run that exited after the rename below
+    // but before the unlink. The orphan is older than pending.jsonl, so it must
+    // be replayed first; a failed recovery returns rather than overwriting it.
+    if (existsSync(SPOOL_FLUSH_FILE)) {
+      try {
+        const orphan = readFileSync(SPOOL_FLUSH_FILE, "utf8");
+        let pending = "";
+        try {
+          pending = readFileSync(SPOOL_FILE, "utf8");
+        } catch {
+          // no new entries after the interrupted flush
+        }
+        writeFileSync(SPOOL_FILE, `${orphan}${pending}`, { mode: 0o600 });
+        unlinkSync(SPOOL_FLUSH_FILE);
+      } catch (e) {
+        if (DEBUG) console.error(`[agentmemory] spool recovery failed:`, (e as Error).message);
+        return;
+      }
+    }
+    if (!existsSync(SPOOL_FILE)) return;
+    // Claim the queue atomically: appends made during replay go to a fresh
+    // pending.jsonl instead of being overwritten when the replay finishes.
+    try {
+      renameSync(SPOOL_FILE, SPOOL_FLUSH_FILE);
+    } catch {
+      return;
+    }
+
+    let lines: string[];
+    try {
+      lines = readFileSync(SPOOL_FLUSH_FILE, "utf8").split("\n").filter((line) => line.length > 0);
+    } catch {
+      return;
+    }
+
+    const cutoff = Date.now() - SPOOL_MAX_AGE_MS;
+    const remaining: string[] = [];
+    let blocked = false;
+    for (const line of lines) {
+      if (blocked) {
+        remaining.push(line);
+        continue;
+      }
+      let entry: SpoolEntry | null = null;
+      try {
+        entry = JSON.parse(line) as SpoolEntry;
+      } catch {
+        continue;
+      }
+      if (!entry || typeof entry.path !== "string" || !entry.body || typeof entry.body !== "object") {
+        continue;
+      }
+      const at = Date.parse(entry.at);
+      if (Number.isFinite(at) && at < cutoff) continue;
+      const result = await send(entry.path, entry.body, 5000);
+      if (result === "retry") {
+        // Preserve order: everything after the first failure waits for the
+        // next attempt instead of hammering a server that is still down.
+        blocked = true;
+        remaining.push(line);
+      }
+    }
+
+    if (remaining.length > 0) {
+      let tail = "";
+      try {
+        tail = readFileSync(SPOOL_FILE, "utf8");
+      } catch {
+        // no new entries while replaying
+      }
+      writeFileSync(SPOOL_FILE, `${remaining.join("\n")}\n${tail}`, { mode: 0o600 });
+    }
+    try {
+      unlinkSync(SPOOL_FLUSH_FILE);
+    } catch {
+      // ignore
+    }
+    if (DEBUG) {
+      console.error(
+        `[agentmemory] spool replay: ${lines.length - remaining.length} cleared, ${remaining.length} pending`,
+      );
+    }
+  } catch (e) {
+    if (DEBUG) console.error(`[agentmemory] spool flush failed:`, (e as Error).message);
+  } finally {
+    spoolFlushing = false;
+  }
+}
+
+async function post(path: string, body: Record<string, unknown>, timeoutMs = 5000): Promise<void> {
+  if ((await send(path, body, timeoutMs)) === "retry" && !SPOOL_EXCLUDE.has(path)) {
+    spoolAppend(path, body);
   }
 }
 
@@ -46,7 +228,7 @@ async function post(path: string, body: Record<string, unknown>, timeoutMs = 500
 function postSync(path: string, body: Record<string, unknown>, timeoutMs = 10000): void {
   try {
     const args: string[] = [
-      "-s", "-X", "POST",
+      "-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST",
       `${API}/agentmemory${path}`,
       "-H", "Content-Type: application/json",
     ];
@@ -54,14 +236,37 @@ function postSync(path: string, body: Record<string, unknown>, timeoutMs = 10000
       args.push("-H", `Authorization: Bearer ${SECRET}`);
     }
     args.push("-d", JSON.stringify(body), "--max-time", String(Math.ceil(timeoutMs / 1000)));
-    const proc = spawnSync("curl", args, { timeout: timeoutMs, stdio: "ignore" });
-    if (proc.error && DEBUG) {
-      console.error(`[agentmemory] sync POST ${path} failed:`, proc.error.message);
-    }
-    if (proc.status !== 0 && proc.status !== null && DEBUG) {
-      console.error(`[agentmemory] sync POST ${path} exit code:`, proc.status);
+    const proc = spawnSync("curl", args, {
+      timeout: timeoutMs,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const status = Number.parseInt(String(proc.stdout ?? "").trim(), 10);
+    // curl exits 0 even for HTTP errors, so inspect the status explicitly. A
+    // 4xx payload will never be accepted: drop it instead of spooling forever.
+    // 401/403 are recoverable with a refreshed secret, and 408/429/5xx are
+    // transient, so those are spooled for replay.
+    const retry =
+      proc.error !== undefined ||
+      proc.status !== 0 ||
+      !Number.isFinite(status) ||
+      status < 200 ||
+      status === 401 ||
+      status === 403 ||
+      status === 408 ||
+      status === 429 ||
+      status >= 500;
+    if (retry) {
+      spoolAppend(path, body);
+      if (DEBUG) {
+        console.error(
+          `[agentmemory] sync POST ${path} failed:`,
+          proc.error ? proc.error.message : `HTTP ${status || proc.status}`,
+        );
+      }
     }
   } catch (e) {
+    spoolAppend(path, body);
     if (DEBUG) console.error(`[agentmemory] sync POST ${path} threw:`, (e as Error).message);
   }
 }
@@ -129,6 +334,15 @@ export default Plugin.define({
   async setup(ctx) {
     const projectPath = ctx.location.directory;
     const controller = new AbortController();
+
+    // Replay anything spooled while the host was unreachable, then keep trying
+    // while this OpenCode process lives. unref so an idle timer never keeps the
+    // process alive on its own.
+    void flushSpool();
+    const spoolTimer = setInterval(() => {
+      void flushSpool();
+    }, SPOOL_FLUSH_MS);
+    (spoolTimer as unknown as { unref?: () => void }).unref?.();
 
     let activeSessionId: string | null = null;
     const stashedFiles = new Map<string, Set<string>>();
@@ -214,6 +428,10 @@ export default Plugin.define({
       data: Record<string, unknown>,
     ): Promise<void> {
       await post("/observe", {
+        // A stable client eventId makes spool replay idempotent: if the
+        // original request reached the server but its response was lost, the
+        // replay is reported as a duplicate instead of storing it twice.
+        eventId: randomUUID(),
         hookType,
         sessionId,
         project: projectPath,
@@ -228,19 +446,37 @@ export default Plugin.define({
       project: string,
     ): Promise<void> {
       try {
-        const res = await fetch(`${API}/agentmemory/sessions`, {
-          signal: AbortSignal.timeout(5000),
-          headers: authHeaders(),
-        });
-        if (!res.ok) return;
-        const body = (await res.json()) as {
-          sessions?: Array<{ id: string; project: string; status: string }>;
-        };
-        const sessions = body.sessions ?? [];
-        for (const s of sessions) {
-          if (s.project === project && s.status === "active" && s.id !== excludeSessionId) {
-            await post("/session/end", { sessionId: s.id });
+        // Page only this project's active sessions. The unfiltered listing
+        // fans out a summary read for every session in the store and used to
+        // run on every new root session.
+        let cursor: string | null = null;
+        for (let page = 0; page < 5; page += 1) {
+          const params = new URLSearchParams({
+            project,
+            status: "active",
+            limit: "100",
+          });
+          if (cursor) params.set("cursor", cursor);
+          const res = await fetch(`${API}/agentmemory/sessions?${params.toString()}`, {
+            signal: AbortSignal.timeout(5000),
+            headers: authHeaders(),
+          });
+          if (!res.ok) return;
+          const body = (await res.json()) as {
+            sessions?: Array<{ id: string; project: string; status: string }>;
+            nextCursor?: string | null;
+          };
+          for (const s of body.sessions ?? []) {
+            if (s.project === project && s.status === "active" && s.id !== excludeSessionId) {
+              // final:false asks the server to finalize after its idle
+              // timeout. That keeps a genuinely concurrent session (another
+              // sandbox on the same project) from being summarized mid-use;
+              // a live session reschedules it on its next observation.
+              await post("/session/end", { sessionId: s.id, final: false });
+            }
           }
+          cursor = body.nextCursor ?? null;
+          if (!cursor) break;
         }
       } catch {
         // best-effort; new session starts regardless
@@ -251,7 +487,8 @@ export default Plugin.define({
     void (async () => {
       try {
         for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
-          switch (event.type) {
+          try {
+            switch (event.type) {
             // ── session.created ──
             case "session.created": {
               const data = event.data;
@@ -279,9 +516,16 @@ export default Plugin.define({
             }
 
             // ── session.idle ──
-            // Summarization is left to the server, which finalizes idle
-            // sessions and runs mem::summarize itself.
+            // The server only finalizes sessions registered with final:false;
+            // it does not watch OpenCode's idle event itself. Without this,
+            // an idle session stayed "active" (and the retry worker skipped
+            // it) until process exit, the next session in the project, or the
+            // 24h sweep. The server waits AGENTMEMORY_FINALIZE_IDLE_MS and
+            // reschedules if another observation arrives.
             case "session.idle": {
+              if (event.data.sessionID) {
+                await post("/session/end", { sessionId: event.data.sessionID, final: false });
+              }
               break;
             }
 
@@ -402,7 +646,9 @@ export default Plugin.define({
               await observe(data.sessionID, "notification", {
                 notification_type: "permission_prompt",
                 permission: data.action,
-                pattern: data.resources.join(", "),
+                pattern: Array.isArray(data.resources)
+                  ? data.resources.join(", ")
+                  : String(data.resources ?? ""),
                 tool_call_id: data.source?.id ?? null,
                 title: data.action,
                 metadata: data.metadata ?? {},
@@ -429,12 +675,20 @@ export default Plugin.define({
               break;
             }
 
-            default:
-              break;
+              default:
+                break;
+            }
+          } catch (e) {
+            // One unexpected event shape must not tear down the subscription
+            // and silently stop capture for the rest of the process.
+            console.error(
+              `[agentmemory] event ${event.type} failed:`,
+              (e as Error).message,
+            );
           }
         }
       } catch (e) {
-        if (!controller.signal.aborted && DEBUG) {
+        if (!controller.signal.aborted) {
           console.error("[agentmemory] event stream ended:", (e as Error).message);
         }
       }
@@ -572,6 +826,7 @@ export default Plugin.define({
     // during summarization or consolidation.
     return async () => {
       controller.abort();
+      clearInterval(spoolTimer);
       const allSids = new Set(stashedFiles.keys());
       if (activeSessionId) allSids.add(activeSessionId);
       for (const sid of allSids) {

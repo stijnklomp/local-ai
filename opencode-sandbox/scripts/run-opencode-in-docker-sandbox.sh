@@ -59,12 +59,23 @@ if [ -n "$SECRET" ]; then
   AUTH_HEADER=(-H "Authorization: Bearer $SECRET")
 fi
 
+# /livez is the unauthenticated liveness probe. /health requires auth and
+# returns 503 for a critical (but still running) report, which used to look
+# like "server not running" here. Validate the secret separately against a
+# small authenticated endpoint.
 if curl -fsS --max-time 2 \
-    "${AUTH_HEADER[@]}" \
-    http://localhost:3111/agentmemory/health \
+    http://localhost:3111/agentmemory/livez \
     >/dev/null 2>&1; then
 
-  echo "agentmemory: available on the host (memory enabled)."
+  if [ -n "$SECRET" ] && ! curl -fsS --max-time 2 \
+      "${AUTH_HEADER[@]}" \
+      http://localhost:3111/agentmemory/config/flags \
+      >/dev/null 2>&1; then
+    echo "agentmemory: running, but the stored secret was rejected." >&2
+    echo "Check ~/.agentmemory/secret, re-run this launcher, and restart the sandbox." >&2
+  else
+    echo "agentmemory: available on the host (memory enabled)."
+  fi
 else
   echo "agentmemory: not running on the host; continuing without it." >&2
   echo >&2
@@ -80,7 +91,8 @@ echo "sandbox: checking for existing sandbox \"$SANDBOX_NAME\"..."
 # approved without prompting. Only explicit deny rules still block (the
 # disabled agentmemory tools and the provider allowlist); the sandbox itself is
 # the safety boundary, so unattended execution is intended.
-if sbx ls -q | grep -Fxq "$SANDBOX_NAME"; then
+SANDBOX_LIST="$(sbx ls -q 2>/dev/null || true)"
+if printf '%s\n' "$SANDBOX_LIST" | grep -Fx "$SANDBOX_NAME" >/dev/null; then
   echo "sandbox: attaching to existing sandbox \"$SANDBOX_NAME\"."
   exec sbx run --name "$SANDBOX_NAME" -- --auto
 else

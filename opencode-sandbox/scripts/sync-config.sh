@@ -125,6 +125,64 @@ if command -v node >/dev/null 2>&1 && [ -f "$PROXY_SCRIPT" ] && [ -f "$PROXY_UNI
   fi
 fi
 
+# --- agentmemory snapshot timer ----------------------------------------------
+# The snapshot API serializes the whole store and commits it to a git repo. A
+# weekly user timer creates one and prunes old restore points, so the repo does
+# not grow without bound. The server-side timer stays effectively off (see
+# SNAPSHOT_INTERVAL in agentmemory.env).
+SNAPSHOT_SCRIPT="${REPO_DIR}/scripts/agentmemory-snapshot.sh"
+SNAPSHOT_SERVICE_SRC="${REPO_DIR}/scripts/agentmemory-snapshot.service"
+SNAPSHOT_TIMER_SRC="${REPO_DIR}/scripts/agentmemory-snapshot.timer"
+SNAPSHOT_KEEP="${AGENTMEMORY_SNAPSHOT_KEEP:-3}"
+SNAPSHOT_STATUS="skipped (unit templates not found)"
+
+if [ -f "$SNAPSHOT_SCRIPT" ] && [ -f "$SNAPSHOT_SERVICE_SRC" ] && [ -f "$SNAPSHOT_TIMER_SRC" ]; then
+  if ! [[ "$SNAPSHOT_KEEP" =~ ^[0-9]+$ ]] || [ "$((10#$SNAPSHOT_KEEP))" -lt 1 ]; then
+    echo "Warning: AGENTMEMORY_SNAPSHOT_KEEP='${SNAPSHOT_KEEP}' is not a positive integer; using 3." >&2
+    SNAPSHOT_KEEP=3
+  fi
+  SNAPSHOT_KEEP="$((10#$SNAPSHOT_KEEP))"
+  SNAPSHOT_STATUS="skipped (unit directory not writable)"
+  if [ -d "$PROXY_UNIT_DIR" ] || mkdir -p "$PROXY_UNIT_DIR" 2>/dev/null; then
+    if [ -w "$PROXY_UNIT_DIR" ]; then
+      SNAPSHOT_ESC="$(printf '%s' "$SNAPSHOT_SCRIPT" | sed 's/[&|]/\\&/g')"
+      backup_file "${PROXY_UNIT_DIR}/agentmemory-snapshot.service" || true
+      backup_file "${PROXY_UNIT_DIR}/agentmemory-snapshot.timer" || true
+
+      SNAP_SERVICE_TMP="$(mktemp "${PROXY_UNIT_DIR}/.agentmemory-snapshot.service.XXXXXX")"
+      sed -e "s|@SNAPSHOT_SCRIPT@|${SNAPSHOT_ESC}|g" \
+          -e "s|@SNAPSHOT_KEEP@|${SNAPSHOT_KEEP}|g" \
+          "$SNAPSHOT_SERVICE_SRC" > "$SNAP_SERVICE_TMP"
+      chmod 644 "$SNAP_SERVICE_TMP"
+      mv -f "$SNAP_SERVICE_TMP" "${PROXY_UNIT_DIR}/agentmemory-snapshot.service"
+
+      SNAP_TIMER_TMP="$(mktemp "${PROXY_UNIT_DIR}/.agentmemory-snapshot.timer.XXXXXX")"
+      cp -f "$SNAPSHOT_TIMER_SRC" "$SNAP_TIMER_TMP"
+      chmod 644 "$SNAP_TIMER_TMP"
+      mv -f "$SNAP_TIMER_TMP" "${PROXY_UNIT_DIR}/agentmemory-snapshot.timer"
+
+      if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload >/dev/null 2>&1; then
+        if systemctl --user enable --now agentmemory-snapshot.timer >/dev/null 2>&1; then
+          SNAPSHOT_STATUS="installed, enabled (weekly, keeps ${SNAPSHOT_KEEP})"
+        else
+          SNAPSHOT_STATUS="installed, but could not be enabled"
+        fi
+      else
+        SNAPSHOT_STATUS="installed; systemd user manager unavailable, enable it manually"
+      fi
+    fi
+  fi
+fi
+
+# --- snapshot interval sanity ------------------------------------------------
+# SNAPSHOT_INTERVAL is in seconds. Node's setInterval clamps any delay above
+# 2^31-1 ms (2147483 s) to 1 ms, so an oversized "effectively off" value turns
+# the server into a snapshot loop instead of disabling its timer.
+SPEC_SNAPSHOT_INTERVAL="$(sed -n 's/^SNAPSHOT_INTERVAL=\([0-9][0-9]*\).*/\1/p' "$REPO_DIR/agentmemory.env" 2>/dev/null | head -n1)"
+if [ -n "$SPEC_SNAPSHOT_INTERVAL" ] && [ "$SPEC_SNAPSHOT_INTERVAL" -gt 2147483 ]; then
+  echo "Warning: SNAPSHOT_INTERVAL=${SPEC_SNAPSHOT_INTERVAL} exceeds Node's 2147483 s timer limit and is clamped to 1 ms, so the server will create snapshots continuously. Use 2147483 or lower." >&2
+fi
+
 # --- embedding model ---------------------------------------------------------
 # When the repo env selects a non-local embedding provider, make sure Ollama has
 # the model, that its OpenAI-compatible embeddings endpoint answers, and that the
@@ -141,12 +199,12 @@ if [ -n "$SPEC_EMBED_PROVIDER" ] && [ "$SPEC_EMBED_PROVIDER" != "local" ]; then
   if ! command -v curl >/dev/null 2>&1; then
     EMBED_STATUS="skipped (curl not found)"
   else
-    if curl -s -m 5 "$OLLAMA_URL/api/tags" | grep -q "\"name\":\"${SPEC_EMBED_MODEL}"; then
+    if curl -s -m 5 "$OLLAMA_URL/api/tags" | grep -F "\"name\":\"${SPEC_EMBED_MODEL}" >/dev/null; then
       EMBED_STATUS="${SPEC_EMBED_MODEL} already present"
     else
       echo "Pulling ${SPEC_EMBED_MODEL} with Ollama..."
       if curl -s -m 900 -X POST "$OLLAMA_URL/api/pull" -H 'Content-Type: application/json' \
-           -d "{\"model\":\"${SPEC_EMBED_MODEL}\",\"stream\":false}" | grep -q '"status":"success"'; then
+           -d "{\"model\":\"${SPEC_EMBED_MODEL}\",\"stream\":false}" | grep -F '"status":"success"' >/dev/null; then
         EMBED_STATUS="${SPEC_EMBED_MODEL} pulled"
       else
         EMBED_STATUS="${SPEC_EMBED_MODEL} pull failed; run: ollama pull ${SPEC_EMBED_MODEL}"
@@ -154,7 +212,7 @@ if [ -n "$SPEC_EMBED_PROVIDER" ] && [ "$SPEC_EMBED_PROVIDER" != "local" ]; then
     fi
 
     EMBED_JSON="$(curl -s -m 120 "$OLLAMA_URL/v1/embeddings" -H 'Content-Type: application/json' \
-      -d "{\"model\":\"${SPEC_EMBED_MODEL}\",\"input\":\"embedding health check\"}")"
+      -d "{\"model\":\"${SPEC_EMBED_MODEL}\",\"input\":\"embedding health check\"}" || true)"
     EMBED_DIMS_ACTUAL=""
     if command -v node >/dev/null 2>&1; then
       EMBED_DIMS_ACTUAL="$(printf '%s' "$EMBED_JSON" | node -e '
@@ -175,7 +233,7 @@ if [ -n "$SPEC_EMBED_PROVIDER" ] && [ "$SPEC_EMBED_PROVIDER" != "local" ]; then
       else
         EMBED_STATUS="${EMBED_STATUS}; embeddings OK (${EMBED_DIMS_ACTUAL} dims)"
       fi
-    elif printf '%s' "$EMBED_JSON" | grep -q '"embedding"'; then
+    elif printf '%s' "$EMBED_JSON" | grep -F '"embedding"' >/dev/null; then
       EMBED_STATUS="${EMBED_STATUS}; embeddings endpoint OK (dimension not checked)"
     else
       EMBED_STATUS="${EMBED_STATUS}; embeddings endpoint check failed"
@@ -280,6 +338,7 @@ fi
 
 echo "Synced to ${CONFIG_DIR}: opencode.json, AGENTS.md, ${PLUGIN_COUNT} plugin file(s), ${COMMAND_COUNT} command file(s)."
 echo "agentmemory proxy: ${PROXY_STATUS}."
+echo "agentmemory snapshot timer: ${SNAPSHOT_STATUS}."
 echo "embedding model: ${EMBED_STATUS}."
 echo "model digests: ${MODEL_LOCK_STATUS}."
 echo "~/.agentmemory/.env: ${AM_ENV_STATUS}."

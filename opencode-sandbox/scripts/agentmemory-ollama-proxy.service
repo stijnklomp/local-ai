@@ -6,6 +6,11 @@ Type=simple
 ExecStart="@NODE_BIN@" "@PROXY_SCRIPT@"
 Environment=PORT=11435
 Environment=UPSTREAM=http://127.0.0.1:11434
+# Bound concurrent generation and the queue behind it. Beyond this the proxy
+# answers 503 immediately so callers fail fast instead of piling up work that
+# cannot finish inside agentmemory's compression deadline.
+Environment=MAX_INFLIGHT=2
+Environment=MAX_QUEUE=8
 Restart=always
 RestartSec=2
 
