@@ -1,0 +1,4 @@
+# Pinned Ollama model digests. sync-config.sh compares these against
+# /api/tags and warns (does not fail) when a tag was re-pulled or is missing.
+mistral-nemo:12b e7e06d107c6c86ed0cf45445f1790720b5092149c4c95f4d965844e9afbfdc89
+qwen3-embedding:0.6b ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d

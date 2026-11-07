@@ -3,14 +3,16 @@
 //
 // Why this exists:
 //   - agentmemory's compression/summary parser rejects a literal `&` that is not
-//     an XML entity. Local models copy shell commands containing `&&` verbatim,
-//     so the output fails validation even though it is otherwise well-formed.
+//     an XML entity and any raw `<` inside a text field. Local models copy shell
+//     commands containing `&&` and code such as `a < b` verbatim, so the output
+//     fails validation even though it is otherwise well-formed.
 //   - agentmemory's client sends no temperature, and before Ollama 0.40.14 the
 //     /v1 endpoint ignored Modelfile defaults. Forcing greedy sampling here also
 //     keeps local models on the strict XML contract.
 //
 // It injects temperature/top_p only when the request omits them, and repairs
-// bare ampersands in assistant content. Every other path is proxied verbatim.
+// bare ampersands plus stray `<`/`>` in the text-only XML fields (see
+// agentmemory-xml-repair.mjs). Every other path is proxied verbatim.
 //
 // Usage:
 //   PORT=11435 UPSTREAM=http://127.0.0.1:11434 node agentmemory-ollama-proxy.mjs
@@ -18,17 +20,13 @@
 
 import http from "node:http";
 
+import { repairContent } from "./agentmemory-xml-repair.mjs";
+
 const PORT = Number(process.env.PORT || 11435);
 const UPSTREAM = (process.env.UPSTREAM || "http://127.0.0.1:11434").replace(/\/+$/, "");
 const TEMPERATURE = process.env.TEMPERATURE ?? "0";
 const TOP_P = process.env.TOP_P ?? "0.1";
 const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 600000);
-
-const BARE_AMP = /&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)/g;
-
-function repairContent(content) {
-  return typeof content === "string" ? content.replace(BARE_AMP, "&amp;") : content;
-}
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -40,6 +38,22 @@ function readBody(req) {
 }
 
 const server = http.createServer(async (req, res) => {
+  // Per-request abort wiring: if the client (agentmemory) gives up before the
+  // response is complete, abort the upstream fetch so Ollama stops generating
+  // tokens nobody will read. `res` "close" fires on normal completion too, so it
+  // only counts as a client abort while the response is still writable.
+  const controller = new AbortController();
+  let clientClosed = false;
+
+  const onClientGone = () => {
+    if (res.writableEnded) return;
+    clientClosed = true;
+    controller.abort();
+  };
+
+  res.on("close", onClientGone);
+  req.on("aborted", onClientGone);
+
   try {
     const pathname = req.url.split("?")[0];
     const isChat = req.method === "POST" && pathname.endsWith("/chat/completions");
@@ -63,7 +77,7 @@ const server = http.createServer(async (req, res) => {
         ...(req.headers.authorization ? { authorization: req.headers.authorization } : {}),
       },
       body: req.method === "GET" || req.method === "HEAD" ? undefined : body,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.any([AbortSignal.timeout(TIMEOUT_MS), controller.signal]),
     });
 
     let out = Buffer.from(await upstream.arrayBuffer());
@@ -96,20 +110,28 @@ const server = http.createServer(async (req, res) => {
     res.end(out);
 
     if (repaired > 0) {
-      console.error(`[proxy] escaped bare '&' in ${repaired} choice(s): ${req.method} ${pathname}`);
+      console.error(`[proxy] repaired XML in ${repaired} choice(s): ${req.method} ${pathname}`);
     }
   } catch (err) {
+    // A client-originated abort is expected (agentmemory's 60s compression /
+    // 120s summary cap) and already did its job; stay quiet and don't answer.
+    if (clientClosed) return;
+
     const message =
       err?.name === "TimeoutError"
         ? `upstream timed out after ${TIMEOUT_MS}ms`
         : String(err?.message || err);
     console.error(`[proxy] ${req.method} ${req.url} -> 502 ${message}`);
+    if (res.writableEnded || res.destroyed) return;
     res.writeHead(502, { "content-type": "application/json" });
     res.end(
       JSON.stringify({
         error: { message: `agentmemory-ollama-proxy: ${message}`, type: "proxy_error" },
       }),
     );
+  } finally {
+    res.off("close", onClientGone);
+    req.off("aborted", onClientGone);
   }
 });
 

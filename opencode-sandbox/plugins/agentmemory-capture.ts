@@ -5,7 +5,6 @@ const API = process.env.AGENTMEMORY_URL || "http://localhost:3111";
 const FILE_TOOLS = new Set(["read", "write", "edit", "glob", "grep"]);
 const FILE_KEYS = ["filePath", "file_path", "path", "file", "pattern"];
 const MAX_STASHED_FILES = 20;
-const IDLE_SUMMARIZE_COOLDOWN_MS = 3000;
 // Title-only pointer to earlier sessions, injected while the conversation has
 // no assistant turn yet (a new session or the segment after /clear).
 const POINTER_SESSION_LIMIT = 5;
@@ -134,7 +133,6 @@ export default Plugin.define({
     let activeSessionId: string | null = null;
     const stashedFiles = new Map<string, Set<string>>();
     const toolStarts = new Map<string, { tool: string; input: unknown; start: number }>();
-    const lastIdleSummarize = new Map<string, number>();
     // Short-lived cache of this project's recent session titles.
     let pointerCache: { at: number; entries: SessionPointerEntry[] } | null = null;
     // Fallback throttle for the transcript check, used only if the hook does
@@ -249,16 +247,6 @@ export default Plugin.define({
       }
     }
 
-    // Fire-and-forget summarization on idle.  Both session.status idle and
-    // session.idle are observed; a short cooldown keeps them from doubling up.
-    async function summarizeOnIdle(sessionId: string): Promise<void> {
-      const now = Date.now();
-      const last = lastIdleSummarize.get(sessionId) ?? 0;
-      if (now - last < IDLE_SUMMARIZE_COOLDOWN_MS) return;
-      lastIdleSummarize.set(sessionId, now);
-      await post("/summarize", { sessionId });
-    }
-
     // ── event stream ──
     void (async () => {
       try {
@@ -291,8 +279,9 @@ export default Plugin.define({
             }
 
             // ── session.idle ──
+            // Summarization is left to the server, which finalizes idle
+            // sessions and runs mem::summarize itself.
             case "session.idle": {
-              await summarizeOnIdle(event.data.sessionID);
               break;
             }
 
@@ -300,9 +289,6 @@ export default Plugin.define({
             case "session.status": {
               const data = event.data;
               const status = data.status;
-              if (status.type === "idle") {
-                await summarizeOnIdle(data.sessionID);
-              }
               await observe(data.sessionID, "session_status", {
                 status_type: status.type,
                 attempt: status.type === "retry" ? status.attempt : null,
@@ -352,7 +338,6 @@ export default Plugin.define({
               post("/consolidate-pipeline", { tier: "all", force: true }, 30000);
               if (sid === activeSessionId) activeSessionId = null;
               stashedFiles.delete(sid);
-              lastIdleSummarize.delete(sid);
               assistantCheck.delete(sid);
               break;
             }
@@ -604,7 +589,6 @@ export default Plugin.define({
       activeSessionId = null;
       stashedFiles.clear();
       toolStarts.clear();
-      lastIdleSummarize.clear();
       assistantCheck.clear();
       pointerCache = null;
     };

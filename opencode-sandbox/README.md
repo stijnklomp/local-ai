@@ -186,10 +186,11 @@ agentmemory does not have to be running to use the sandbox. If the host health c
 
 agentmemory v0.9.x keeps LLM features off until a provider is named explicitly: `OPENAI_API_KEY` alone leaves the server in `noop` mode. `agentmemory.env` therefore sets `AGENTMEMORY_LLM_PROVIDER=openai`; `agentmemory status` should report `Provider: ✓ llm`.
 
-Pointing it straight at Ollama is not enough for reliable compression. agentmemory's compression and summary prompts demand strict XML, and its parser rejects a literal `&` that is not an entity. Shell observations routinely contain `&&`, which local models copy verbatim into `<fact>`; at Ollama's default sampling the output is then rejected. `scripts/agentmemory-ollama-proxy.mjs` is a small OpenAI-compatible proxy that sits in front of Ollama and:
+Pointing it straight at Ollama is not enough for reliable compression. agentmemory's compression and summary prompts demand strict XML, and its parser rejects a literal `&` that is not an entity and any raw `<` inside a text field. Shell observations routinely contain `&&` and code such as `a < b`, which local models copy verbatim; at Ollama's default sampling the output is then rejected. `scripts/agentmemory-ollama-proxy.mjs` is a small OpenAI-compatible proxy that sits in front of Ollama and:
 
-- forces `temperature: 0` and `top_p: 0.1` when the request omits them (agentmemory never sends either), and
-- escapes bare `&` in assistant content before returning it.
+- forces `temperature: 0` and `top_p: 0.1` when the request omits them (agentmemory never sends either),
+- escapes bare `&` and stray `<`/`>` inside the text-only XML fields (`scripts/agentmemory-xml-repair.mjs`), and
+- keeps only the `<observation>`/`<summary>` root, dropping code fences, think blocks and trailing prose.
 
 `agentmemory.env` sets `OPENAI_BASE_URL=http://127.0.0.1:11435/v1`. `./scripts/sync-config.sh` installs the proxy as a systemd user service: it renders `scripts/agentmemory-ollama-proxy.service` with absolute paths into `~/.config/systemd/user/`, enables and restarts it, and replaces `~/.agentmemory/.env` with this repo's `agentmemory.env` (backing it up to `~/.agentmemory/.env.bak` first). Pass `--skip-agentmemory-env` to leave the host env untouched. The repo file does not contain `AGENTMEMORY_SECRET`; if the server rotates the secret on restart, re-run the sandbox launcher so it refreshes `~/.config/opencode/agentmemory-secret`, or copy the secret back from the backup. Re-run the script after moving the checkout or changing the Node binary.
 

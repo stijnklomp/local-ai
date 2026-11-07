@@ -185,6 +185,65 @@ elif [ "$SPEC_EMBED_PROVIDER" = "local" ]; then
   EMBED_STATUS="local provider; no Ollama model needed"
 fi
 
+# --- pinned model digests ------------------------------------------------------
+# A tag can be re-pulled under the same name and silently change digest, which
+# changes behaviour (context, tokenizer, output quality) between runs. Compare
+# /api/tags against models.lock and warn only: a mismatch means "re-validate",
+# not "abort the sync". Missing file or an unreachable Ollama is a skip.
+MODEL_LOCK_FILE="${REPO_DIR}/models.lock"
+MODEL_LOCK_STATUS="skipped (models.lock not found)"
+if [ -f "$MODEL_LOCK_FILE" ]; then
+  OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11434}"
+  if ! command -v curl >/dev/null 2>&1; then
+    MODEL_LOCK_STATUS="skipped (curl not found)"
+  elif ! command -v node >/dev/null 2>&1; then
+    MODEL_LOCK_STATUS="skipped (node not found)"
+  else
+    TAGS_JSON="$(curl -s -m 5 "$OLLAMA_URL/api/tags" 2>/dev/null || true)"
+    if [ -z "$TAGS_JSON" ]; then
+      MODEL_LOCK_STATUS="skipped (Ollama did not answer at ${OLLAMA_URL})"
+    else
+      MODEL_LOCK_STATUS="$(printf '%s' "$TAGS_JSON" | node -e '
+        const fs = require("fs");
+        let s = "";
+        process.stdin.on("data", (d) => { s += d; })
+          .on("end", () => {
+            const lock = fs.readFileSync(process.argv[1], "utf8")
+              .split("\n").map((l) => l.trim())
+              .filter((l) => l && !l.startsWith("#"));
+            let models = [];
+            try {
+              models = JSON.parse(s).models || [];
+            } catch {
+              console.log("skipped (invalid /api/tags response)");
+              return;
+            }
+            // /api/tags digests carry a sha256: prefix; models.lock pins bare hex.
+            const byName = new Map(models.map((m) => [m.name, String(m.digest || "").replace(/^sha256:/, "")]));
+            const matched = [];
+            const warnings = [];
+            for (const line of lock) {
+              const [name, expected] = line.split(/\s+/);
+              if (!name || !expected) continue;
+              const actual = byName.get(name);
+              if (actual === undefined) {
+                warnings.push(name + " missing (run: ollama pull " + name + ")");
+              } else if (actual !== expected) {
+                warnings.push(name + " digest changed (expected " + expected.slice(0, 12) +
+                  "\u2026, got " + actual.slice(0, 12) + "\u2026; re-validate, then update models.lock)");
+              } else {
+                matched.push(name);
+              }
+            }
+            const summary = matched.length + "/" + lock.length + " pinned digests match";
+            console.log(warnings.length ? "WARNING: " + warnings.join("; ") + " (" + summary + ")" : summary);
+          });
+      ' "$MODEL_LOCK_FILE" 2>/dev/null || true)"
+      [ -n "$MODEL_LOCK_STATUS" ] || MODEL_LOCK_STATUS="check failed"
+    fi
+  fi
+fi
+
 # --- agentmemory env -----------------------------------------------------------
 # Replace the host env with this repo's agentmemory.env (the source of truth).
 # Keep a .bak, preserve the secret if it lived only in the old file, and allow
@@ -222,6 +281,7 @@ fi
 echo "Synced to ${CONFIG_DIR}: opencode.json, AGENTS.md, ${PLUGIN_COUNT} plugin file(s), ${COMMAND_COUNT} command file(s)."
 echo "agentmemory proxy: ${PROXY_STATUS}."
 echo "embedding model: ${EMBED_STATUS}."
+echo "model digests: ${MODEL_LOCK_STATUS}."
 echo "~/.agentmemory/.env: ${AM_ENV_STATUS}."
 echo "Previous versions were copied to *.bak (single file per source, overwritten every run)."
 echo "If you customized opencode.json, merge your changes manually."
